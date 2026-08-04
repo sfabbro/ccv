@@ -1,0 +1,18 @@
+# Python caches
+__pycache__/
+*.pyc
+
+# Tool outputs (never commit personal CCV XML or BibTeX exports)
+*.xml
+*.bib
+*.sources.bib
+CCV-*.xml
+
+# Secrets / local config
+.env
+*.token
+ADS_TOKEN*
+
+# Editor/OS junk
+.DS_Store
+*.swp
