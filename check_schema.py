@@ -3,11 +3,11 @@
 real CCV export and the official CCV schema.
 
 Usage:
-    python check_schema.py [CCV-export.xml] [path/to/ijiraq-CCV] [path/to/dataset-cv-lov.xml]
+    python check_schema.py [CCV-export.xml] [path/to/repo-root] [path/to/dataset-cv-lov.xml]
 
 Defaults:
     CCV-export.xml       -> ./CCV-export.xml
-    ijiraq-CCV checkout  -> ../ijiraq-CCV
+    repo root (with ccv/) -> this script's directory
     dataset-cv-lov.xml   -> /tmp/ccv-schema/dataset-cv-lov.xml (download from
                             https://ccv-cvc.ca/schema/dataset-cv-lov.xml)
 
@@ -19,7 +19,11 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-sys.path.insert(0, str(Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else Path(__file__).resolve().parent.parent / "ijiraq-CCV"))
+REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(
+    0,
+    str(Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else REPO_ROOT),
+)
 import ccv.schema as schema  # noqa: E402
 
 USER_CCV = sys.argv[1] if len(sys.argv) > 1 else "CCV-export.xml"

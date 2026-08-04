@@ -2,9 +2,8 @@
 """ccv_update — fetch your papers from NASA ADS + Google Scholar and build an
 updated Canadian Common CV (CCV) XML.
 
-This is a thin, clean wrapper around the `ccv` package from
-https://github.com/ijiraq/CCV (which must be checked out as a sibling
-directory).  It adds three things the upstream tool does not do:
+Bundles the in-repo `ccv` package (originally based on
+https://github.com/ijiraq/CCV) and adds:
 
   1. Automated retrieval of your publications:
        - NASA ADS          via the official ADS API (needs an API token)
@@ -19,15 +18,12 @@ Output is a CCV XML file ready for "Utilities -> Import CV XML" at
 https://ccv-cvc.ca/ — plus a record of the merged BibTeX that produced it.
 
 Example:
-    ./ccv_update.py \\
+    .venv/bin/python ccv_update.py \\
         --base      CCV-export.xml \\
         --out       CCV-updated.xml \\
         --surname   Fabbro \\
         --ads-token "$ADS_API_TOKEN" --ads-author "Fabbro, S" \\
         --last-years 6 --hqp-from-base --preserve-extra --validate
-
-Requires the sibling repo's venv (which has bibtexparser, yaml, scholarly):
-    /data/src/ijiraq-CCV/.venv/bin/python ccv_update.py ...
 """
 
 from __future__ import annotations
@@ -44,35 +40,26 @@ from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# Locate and import the upstream `ccv` package (sibling checkout).
+# Import the in-repo `ccv` package (same directory as this script).
 # ---------------------------------------------------------------------------
 
-REPO_CANDIDATES = (
-    Path(__file__).resolve().parent.parent / "ijiraq-CCV",
-    Path(__file__).resolve().parent.parent / "CCV",
-    Path(__file__).resolve().parent / "ijiraq-CCV",
-)
+REPO_ROOT = Path(__file__).resolve().parent
 
 
-def _import_ccv(repo: str | Path | None):
-    candidates = [Path(repo)] if repo else list(REPO_CANDIDATES)
-    for candidate in candidates:
-        candidate = candidate.resolve()
-        if (candidate / "ccv" / "cli.py").exists():
-            sys.path.insert(0, str(candidate))
-            import ccv.bibtex_io  # noqa: F401
-            import ccv.fetch_ads  # noqa: F401
-            import ccv.publications  # noqa: F401
-            import ccv.schema  # noqa: F401
-            import ccv.validate  # noqa: F401
-            import ccv.xmlutil  # noqa: F401
+def _import_ccv(repo: str | Path | None = None) -> Path:
+    root = Path(repo).resolve() if repo else REPO_ROOT
+    if not (root / "ccv" / "cli.py").exists():
+        raise SystemExit(f"error: no ccv package found under {root}")
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import ccv.bibtex_io  # noqa: F401
+    import ccv.fetch_ads  # noqa: F401
+    import ccv.publications  # noqa: F401
+    import ccv.schema  # noqa: F401
+    import ccv.validate  # noqa: F401
+    import ccv.xmlutil  # noqa: F401
 
-            return candidate
-    raise SystemExit(
-        "error: could not find the ijiraq/CCV checkout (looked in "
-        + ", ".join(str(c) for c in candidates)
-        + "). Clone it with:  git clone https://github.com/ijiraq/CCV"
-    )
+    return root
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +210,11 @@ def ensure_publication_templates(tree: ET.ElementTree) -> list[str]:
             field = ET.SubElement(section, f"{{{ns}}}field")
             field.set("label", field_name)
             field.set("id", field_id)
-            value = ET.SubElement(field, f"{{{ns}}}value")
-            value.set("type", "String")
+            if field_name in schema.LOV_FIELD_LABELS:
+                ET.SubElement(field, f"{{{ns}}}lov")
+            else:
+                value = ET.SubElement(field, f"{{{ns}}}value")
+                value.set("type", "String")
         added.append(label)
     return added
 
@@ -442,29 +432,11 @@ def strip_empty_templates(tree: ET.ElementTree) -> list[str]:
     return removed
 
 
-_INITIALS_RE = re.compile(r"[A-Za-z]\.?(?:[ -][A-Za-z]\.?)*")
-
-
 def _split_ads_authors(raw: str) -> list[str]:
-    """Split a comma-separated ADS author list, keeping 'Surname, Initials' together.
+    """Delegate to ccv.fetch_ads.split_ads_authors (single implementation)."""
+    from ccv.fetch_ads import split_ads_authors
 
-    'Kavelaars, J'      -> ['Kavelaars, J']   (one author: initials glued back)
-    'Kavelaars, Gladman' -> ['Kavelaars', 'Gladman']  (two surnames)
-
-    This is why we cannot naively split on the comma: author:"Kavelaars" OR
-    author:"J" would match thousands of papers whose (corrupted) surname is
-    the single letter 'J'.
-    """
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    if not parts:
-        return []
-    out = [parts[0]]
-    for part in parts[1:]:
-        if len(part) <= 12 and _INITIALS_RE.fullmatch(part):
-            out[-1] += ", " + part  # initials of the previous author
-        else:
-            out.append(part)
-    return out
+    return split_ads_authors(raw)
 
 
 def _read_bib_text(path: Path) -> str:
@@ -786,7 +758,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--base", required=True, help="Existing CCV XML export (the structural base)")
     parser.add_argument("--out", required=True, help="Output CCV XML path")
-    parser.add_argument("--repo", default=None, help="Path to the ijiraq/CCV checkout")
+    parser.add_argument("--repo", default=None,
+                        help="Path to the repo root that contains the ccv/ package "
+                        "(default: this script's directory)")
     parser.add_argument("--surname", default="Fabbro",
                         help="Comma-separated surnames used to detect first/last authorship; "
                         "warned against if it disagrees with the base CCV Family Name")
@@ -826,7 +800,9 @@ def build_parser() -> argparse.ArgumentParser:
                      "their surname).")
     ads.add_argument("--ads-orcid", default=None, help="ORCID iD, e.g. 0000-0001-0000-0000")
     ads.add_argument("--ads-bibcodes", default=None, help="Comma-separated ADS bibcodes")
-    ads.add_argument("--ads-query", default=None, help="Raw ADS search query (overrides --ads-author/--ads-orcid)")
+    ads.add_argument("--ads-query", default=None,
+                     help="Raw ADS search query (used only when --ads-author/"
+                     "--ads-orcid/--ads-bibcodes are not given)")
     ads.add_argument("--ads-max", type=int, default=1000, help="Max papers to fetch from ADS")
     ads.add_argument("--ads-since-year", type=int, default=None, help="Keep only papers from this year onward")
 

@@ -1,12 +1,12 @@
-# ccv_update
+# ccv
 
 Fetch your publications from **NASA ADS** and **Google Scholar**, merge and
 de-duplicate them, and build an updated **Canadian Common CV (CCV)** XML file
 ready to import at <https://ccv-cvc.ca/> (Utilities → Import CV XML).
 
-This is a thin, clean wrapper around the `ccv` package from
-[github.com/ijiraq/CCV](https://github.com/ijiraq/CCV), which must be checked
-out as a sibling directory (it already is: `../ijiraq-CCV`). It adds:
+This repo is self-contained: it includes the `ccv` package (originally based on
+[ijiraq/CCV](https://github.com/ijiraq/CCV)) plus a high-level `ccv_update.py`
+wrapper that adds:
 
 1. **Automated retrieval** — ADS via the official ADS API, Google Scholar via
    `scholarly` (best-effort) or a Scholar export file.
@@ -17,18 +17,26 @@ out as a sibling directory (it already is: `../ijiraq-CCV`). It adds:
    Chapters). The wrapper injects any missing managed publication template so
    `ccv build` works, then strips the leftover empty template from the output.
 
+You can also use the lower-level CLI directly:
+
+```bash
+.venv/bin/python -m ccv build --base CCV-export.xml --bib papers.bib --out CCV-built.xml
+.venv/bin/python -m ccv summarize --base CCV-built.xml
+```
+
 ## Install
 
 ```bash
-git clone https://github.com/ijiraq/CCV            # sibling dir (done here)
-cd ijiraq-CCV && python3 -m venv .venv
-uv pip install --python .venv/bin/python scholarly
+git clone https://github.com/sfabbro/ccv.git
+cd ccv
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
 ## Usage
 
 ```bash
-ijiraq-CCV/.venv/bin/python ccv_update.py \
+.venv/bin/python ccv_update.py \
     --base      CCV-export.xml \
     --out       CCV-updated.xml \
     --surname   Fabbro \
@@ -49,7 +57,7 @@ ijiraq-CCV/.venv/bin/python ccv_update.py \
 | `--gs-bib FILE` | Scholar export file (My Library → Export → BibTeX) — reliable, recommended |
 | `--bib FILE` | any other local `.bib` file |
 
-### Build options (from ijiraq/CCV)
+### Build options
 
 - `--since YYYY[-MM]` — only include entries on/after the cutoff
 - `--last-years N` — keep only the last N years; NSERC validates the
@@ -58,7 +66,7 @@ ijiraq-CCV/.venv/bin/python ccv_update.py \
 - `--surname` — your surname(s); used to mark first/last authorship (default `Fabbro`)
 - `--no-name-check` — skip the family-name mismatch warning (see below)
 - `--preserve-extra` — keep base-CV publications absent from the BibTeX
-  (otherwise they are removed, as the upstream tool intends)
+  (otherwise they are removed)
 - `--overrides FILE` — YAML rules for invited/refereed/status/percentage
 
 ### NSERC-specific options
@@ -98,7 +106,7 @@ check silently.
 
 ```bash
 # See exactly which authors would be marked, then decide:
-ijiraq-CCV/.venv/bin/python ccv_update.py \
+.venv/bin/python ccv_update.py \
     --base CCV-export.xml --out CCV-updated.xml --surname Fabbro \
     --ads-bib ~/ads-export.bib --hqp-from-base --hqp-dry-run
 ```
@@ -115,11 +123,10 @@ ijiraq-CCV/.venv/bin/python ccv_update.py \
 - **Validation flags are pre-existing.** A `--validate` report mostly flags
   empty Contribution Role/Percentage on records that were already in your base
   CCV export; the wrapper does not introduce them. Fill these in the CCV UI.
-- **Schema verified.** All field IDs and LOV IDs used by the underlying `ccv`
-  package were cross-checked against the official CCV schema
-  (`ccv-cvc.ca/schema/dataset-cv.xml`, `dataset-cv-lov.xml`) and against the
-  user's own export — all match. Re-run with:
-  `python check_schema.py CCV-export.xml ../ijiraq-CCV /path/to/dataset-cv-lov.xml`.
+- **Schema verified.** All field IDs and LOV IDs used by the `ccv` package were
+  cross-checked against the official CCV schema (`ccv-cvc.ca/schema/dataset-cv.xml`,
+  `dataset-cv-lov.xml`) and against the user's own export — all match. Re-run with:
+  `python check_schema.py CCV-export.xml . /path/to/dataset-cv-lov.xml`.
 - **Google Scholar has no official API.** The `scholarly` scrape works from
   residential IPs but is often throttled/blocked from cloud hosts. For reliable
   automation use `--gs-bib` with a Scholar export, or use ADS only.
@@ -128,6 +135,6 @@ ijiraq-CCV/.venv/bin/python ccv_update.py \
 
 ## Requirements
 
-- Python 3.10+ with `bibtexparser`, `PyYAML` (from ijiraq/CCV's requirements)
-  and `scholarly` (for `--gs-author` only)
+- Python 3.10+ with dependencies from `requirements.txt` (`bibtexparser`,
+  `PyYAML`, `scholarly`)
 - A CCV account, an ADS API token (for `--ads-*` API mode), and/or BibTeX exports

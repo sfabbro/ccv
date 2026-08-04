@@ -1,4 +1,5 @@
-# Python caches
+# Python caches / local env
+.venv/
 __pycache__/
 *.pyc
 
@@ -16,3 +17,5 @@ ADS_TOKEN*
 # Editor/OS junk
 .DS_Store
 *.swp
+.idea/
+.ipynb_checkpoints/
