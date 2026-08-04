@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from typing import Any, Callable
 
@@ -11,10 +12,12 @@ from .bibtex_io import (
     clean_title,
     contributor_count,
     dedupe_entries,
-    entry_key,
+    entry_keys,
     format_authors_for_ccv,
     journal_name,
     month_number,
+    normalize_title_key,
+    parse_name,
 )
 from .overrides import Overrides
 from .schema import (
@@ -183,18 +186,97 @@ def entry_passes_since(entry: dict[str, Any], since: tuple[int, int] | None) -> 
 
 
 def record_key(record) -> str:
-    """Stable identity of a CCV publication record, for change reporting."""
-    label = record.get("label", "")
-    title_field = _TITLE_FIELD_BY_LABEL.get(label, "Article Title")
+    """Primary identity of a CCV publication record (DOI, else title)."""
+    keys = record_keys(record)
+    return keys[0] if keys else ""
+
+
+def record_keys(record) -> list[str]:
+    """DOI and/or title keys — same scheme as bibtex_io.entry_keys."""
+    keys: list[str] = []
     doi = xmlutil.value_text(xmlutil.field_by_label(record, "DOI")).strip().lower()
     if doi:
-        return f"doi:{doi.rstrip('/')}"
+        keys.append(f"doi:{doi.rstrip('/')}")
+    label = record.get("label", "")
+    title_field = _TITLE_FIELD_BY_LABEL.get(label, "Article Title")
     title = xmlutil.value_text(xmlutil.field_by_label(record, title_field))
-    if title:
-        import re
+    norm = normalize_title_key(title)
+    if norm:
+        keys.append(f"title:{norm}")
+    return keys
 
-        return "title:" + re.sub(r"[^a-z0-9]+", "", title.lower())
-    return ""
+
+def _ccv_author_position(authors_text: str, surnames: tuple[str, ...]) -> int | None:
+    """Authorship position from a CCV Authors field (newline/&/, and separated)."""
+    parts = [p.strip() for p in re.split(r",\n|\band\b|&\n?", authors_text or "") if p.strip()]
+    cleaned: list[str] = []
+    for part in parts:
+        part = re.sub(r"\s*\(\*\)\s*|\*", "", part).strip().strip(",")
+        if part and part not in {"&", "and", "..."}:
+            cleaned.append(part)
+    if not cleaned:
+        return None
+
+    def matches(author: str) -> bool:
+        last = author.split(",", 1)[0].strip() if "," in author else parse_name(author)[0]
+        return any(s.lower() == last.lower() for s in surnames)
+
+    if matches(cleaned[0]):
+        return 0
+    if len(cleaned) > 1 and matches(cleaned[-1]):
+        return -1
+    return None
+
+
+def fill_missing_contribution_fields(
+    tree,
+    author_surnames: tuple[str, ...],
+    overrides: Overrides | None = None,
+) -> int:
+    """Fill empty Contribution Role/Percentage on preserved base records.
+
+    Base CCV exports often leave these blank; NSERC CCV validation wants them.
+    """
+    overrides = overrides or Overrides()
+    pubs = xmlutil.find_section(tree.getroot(), "Publications")
+    if pubs is None:
+        return 0
+    filled = 0
+    for record in xmlutil.child_sections(pubs):
+        if record.get("label") not in MANAGED_PUBLICATION_LABELS:
+            continue
+        role_field = xmlutil.field_by_label(record, "Contribution Role")
+        pct_field = xmlutil.field_by_label(record, "Contribution Percentage")
+        need_role = not xmlutil.lov_label(role_field)
+        need_pct = not xmlutil.lov_label(pct_field)
+        if not need_role and not need_pct:
+            continue
+        authors = xmlutil.value_text(xmlutil.field_by_label(record, "Authors"))
+        position = _ccv_author_position(authors, author_surnames)
+        n = max(1, len([p for p in re.split(r",\n|\band\b|&\n?", authors or "") if p.strip()]))
+        if need_role and role_field is not None:
+            if position == 0:
+                role = ROLE_FIRST
+            elif position == -1:
+                role = ROLE_LAST
+            else:
+                role = ROLE_CO  # unknown → Co-Author
+            xmlutil.set_lov(role_field, role, LOV_IDS[role])
+            desc = xmlutil.field_by_label(record, "Description of Contribution Role")
+            if desc is not None and not xmlutil.value_text(desc).strip():
+                xmlutil.set_value_text(desc, role)
+            filled += 1
+        if need_pct and pct_field is not None:
+            pct = contribution_percentage(
+                {},
+                position=position,
+                n_contributors=n,
+                defaults=overrides.percentage_defaults(),
+            )
+            if pct in LOV_IDS:
+                xmlutil.set_lov(pct_field, pct, LOV_IDS[pct])
+                filled += 1
+    return filled
 
 
 def replace_publications(
@@ -219,7 +301,7 @@ def replace_publications(
         raise ValueError("Base CCV has no Publications section")
 
     templates: dict[str, Any] = {}
-    base_records: dict[str, list[tuple[Any, str]]] = {}
+    base_records: dict[str, list[tuple[Any, list[str]]]] = {}
     for child in xmlutil.child_sections(publications):
         label = child.get("label")
         if label not in MANAGED_PUBLICATION_LABELS:
@@ -227,7 +309,7 @@ def replace_publications(
         if label not in templates:
             templates[label] = deepcopy(child)
             xmlutil.strip_record_id(templates[label])
-        base_records.setdefault(label, []).append((child, record_key(child)))
+        base_records.setdefault(label, []).append((child, record_keys(child)))
 
     missing = [label for label in MANAGED_PUBLICATION_LABELS if label not in templates]
     if missing:
@@ -244,9 +326,20 @@ def replace_publications(
         if on_skip:
             on_skip({"ID": key}, reason)
 
-    base_key_set = {
-        label: {key for _, key in records if key} for label, records in base_records.items()
+    # key -> full key-set for the base record that owns it (so a title hit
+    # also clears that record's DOI key, and vice versa).
+    base_key_set: dict[str, set[str]] = {label: set() for label in MANAGED_PUBLICATION_LABELS}
+    base_key_groups: dict[str, dict[str, frozenset[str]]] = {
+        label: {} for label in MANAGED_PUBLICATION_LABELS
     }
+    for label, records in base_records.items():
+        for _element, keys in records:
+            group = frozenset(k for k in keys if k)
+            if not group:
+                continue
+            base_key_set[label].update(group)
+            for k in group:
+                base_key_groups[label][k] = group
 
     counts = {label: 0 for label in MANAGED_PUBLICATION_LABELS}
     added: list[str] = []
@@ -267,16 +360,27 @@ def replace_publications(
             if on_skip:
                 on_skip(entry, "excluded by --overrides skip rule")
             continue
+        if not str(entry.get("year") or "").strip():
+            if on_skip:
+                on_skip(entry, "missing year (required for CCV/NSERC)")
+            continue
         if not entry_passes_since(entry, since):
             if on_skip:
                 on_skip(entry, "before --since cutoff")
             continue
-        key = entry_key(entry)
-        if key and key in base_key_set[label]:
-            base_key_set[label].discard(key)
-            updated.append(key or entry.get("ID") or "?")
+        keys = entry_keys(entry)
+        matched_group: frozenset[str] | None = None
+        for k in keys:
+            matched_group = base_key_groups[label].get(k)
+            if matched_group is not None:
+                break
+        if matched_group is not None:
+            for k in matched_group:
+                base_key_set[label].discard(k)
+                base_key_groups[label].pop(k, None)
+            updated.append(keys[0] if keys else entry.get("ID") or "?")
         else:
-            added.append(key or entry.get("ID") or "?")
+            added.append(keys[0] if keys else entry.get("ID") or "?")
         record = deepcopy(templates[label])
         fill_record(
             record,
@@ -292,15 +396,30 @@ def replace_publications(
     kept: list[str] = []
     removed: list[str] = []
     for label, records in base_records.items():
-        for element, key in records:
-            if key and key in base_key_set[label] or not key:
+        for element, keys in records:
+            still = [k for k in keys if k in base_key_set[label]]
+            if still or not keys:
                 # Not matched by the new BibTeX: keep (preserve-extra) or drop.
                 if preserve_extra:
+                    # Drop preserved rows outside the NSERC window when --since set.
+                    if since is not None:
+                        year_txt = xmlutil.value_text(
+                            xmlutil.field_by_label(element, "Year")
+                        ).strip()
+                        try:
+                            year = int(year_txt)
+                        except ValueError:
+                            year = 0
+                        if not year or (year, 1) < since:
+                            removed.append(keys[0] if keys else "<unkeyed>")
+                            continue
                     publications.append(element)
-                    kept.append(key or "<unkeyed>")
+                    kept.append(keys[0] if keys else "<unkeyed>")
                 else:
-                    removed.append(key or "<unkeyed>")
+                    removed.append(keys[0] if keys else "<unkeyed>")
             # else: matched and replaced by a fresh record (counted as updated)
+    if preserve_extra:
+        fill_missing_contribution_fields(tree, author_surnames, overrides)
     return {
         "publication_counts": counts,
         "added": added,

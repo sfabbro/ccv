@@ -94,10 +94,10 @@ def _cancel_timeout(old) -> None:
     signal.signal(signal.SIGALRM, old)
 
 
-def _gs_entrytype(venue: str) -> str:
-    v = (venue or "").lower()
-    if "arxiv" in v:
-        return "misc"
+def _gs_entrytype(_venue: str) -> str:
+    # ponytail: treat arXiv/preprints as journal articles so they land in
+    # Contributions; ceiling = NSERC may want these as "Submitted" — upgrade
+    # via --overrides status rules when needed.
     return "article"
 
 
@@ -108,34 +108,59 @@ def _gs_bibtex_id(pub: dict[str, Any], title: str) -> str:
     return "Scholar" + re.sub(r"[^A-Za-z0-9]+", "", title)[:48]
 
 
-def _gs_author_field(author: str) -> str:
-    """Scholar's 'J J Kavelaars, M Bannister, ...' -> 'J J Kavelaars and M Bannister'."""
+def _gs_author_field(author: Any) -> str:
+    """Scholar author list/string -> BibTeX 'A and B and C'.
+
+    scholarly.search_pubs often returns bib.author as a list; str(list) would
+    produce "['A', 'B']" in the BibTeX and corrupt CCV Authors fields.
+    """
     if not author:
         return ""
-    if "..." in author:
-        author = author.split("...")[0]
-    parts = [p.strip() for p in author.split(",") if p.strip()]
+    if isinstance(author, (list, tuple)):
+        parts = [str(p).strip() for p in author if str(p).strip()]
+    else:
+        text = str(author).strip()
+        if "..." in text:
+            text = text.split("...")[0]
+        parts = [p.strip() for p in text.split(",") if p.strip()]
     return " and ".join(parts)
+
+
+def _gs_year(bib: dict[str, Any], pub: dict[str, Any]) -> str:
+    """Best-effort year from a scholarly snippet (often missing)."""
+    for key in ("year", "pub_year", "pubyear"):
+        for src in (bib, pub):
+            raw = src.get(key)
+            if raw is None:
+                continue
+            text = str(raw).strip()
+            m = re.search(r"(19|20)\d{2}", text)
+            if m:
+                return m.group(0)
+    venue = str(bib.get("venue") or pub.get("venue") or "")
+    m = re.search(r"(19|20)\d{2}", venue)
+    return m.group(0) if m else ""
 
 
 def _pub_to_bibtex(pub: dict[str, Any]) -> str | None:
     """Build a minimal BibTeX entry from a scholarly search_pubs snippet."""
     bib = pub.get("bib") or pub
     title = str(bib.get("title") or pub.get("title") or "").strip()
-    author = str(bib.get("author") or pub.get("author") or "").strip()
-    year = str(bib.get("year") or pub.get("year") or "").strip()
+    author = _gs_author_field(bib.get("author") or pub.get("author"))
+    year = _gs_year(bib if isinstance(bib, dict) else {}, pub)
     venue = str(bib.get("venue") or pub.get("venue") or "").strip()
     if not title or not author:
         return None
+    # Year is required for CCV/NSERC; skip yearless Scholar rows (ADS covers most).
+    if not year:
+        return None
     entry_type = _gs_entrytype(venue)
     key = _gs_bibtex_id(pub, title)
-    lines = [f"@{entry_type}{{{key},", f"  author = {{{_gs_author_field(author)}}},",
+    lines = [f"@{entry_type}{{{key},", f"  author = {{{author}}},",
              f"  title = {{{title}}},"]
     if venue:
-        field = "journal" if entry_type == "article" else "howpublished"
-        lines.append(f"  {field} = {{{venue}}},")
-    if year:
-        lines.append(f"  year = {{{year}}},")
+        lines.append(f"  journal = {{{venue}}},")
+    lines.append(f"  year = {{{year}}},")
     if pub.get("eprint_url"):
         lines.append(f"  url = {{{pub['eprint_url']}}},")
     lines.append("}")

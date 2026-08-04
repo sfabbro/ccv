@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -133,34 +134,80 @@ def journal_name(entry: dict[str, Any]) -> str:
     return strip_latex(expand_journal(entry.get("journal")))
 
 
+# Fold Greek letters / common LaTeX leftovers so ADS "Omega" matches Scholar "Ω".
+_TITLE_FOLDS = (
+    ("omega", "omega"),
+    ("lambda", "lambda"),
+    ("alpha", "alpha"),
+    ("beta", "beta"),
+    ("gamma", "gamma"),
+    ("delta", "delta"),
+    ("μ", "mu"),
+    ("Ω", "omega"),
+    ("ω", "omega"),
+    ("Λ", "lambda"),
+    ("λ", "lambda"),
+    ("α", "alpha"),
+    ("β", "beta"),
+    ("γ", "gamma"),
+    ("δ", "delta"),
+)
+
+
+def normalize_title_key(title: str) -> str:
+    """ASCII-ish title fingerprint for cross-source dedupe (ADS ↔ Scholar)."""
+    text = strip_latex(title)
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = text.lower()
+    for src, dst in _TITLE_FOLDS:
+        text = text.replace(src, dst)
+    # leftover 'ensuremathomega' etc. after strip_latex
+    text = re.sub(r"ensuremath", "", text)
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
 def entry_key(entry: dict[str, Any]) -> str:
-    """Stable identity for dedup: DOI first, then normalized title, then ID."""
+    """Primary identity: DOI if present, else normalized title, else ID."""
+    keys = entry_keys(entry)
+    return keys[0] if keys else ""
+
+
+def entry_keys(entry: dict[str, Any]) -> list[str]:
+    """All identities for one entry (DOI and title), for cross-source dedupe.
+
+    ADS rows usually have a DOI; Scholar snippets rarely do. Indexing both
+    keys means a Scholar title still collapses onto the earlier ADS row.
+    """
+    keys: list[str] = []
     doi = str(entry.get("doi") or "").strip().lower().rstrip("/")
     if doi:
-        return f"doi:{doi}"
-    title = re.sub(r"[^a-z0-9]+", "", clean_title(entry).lower())
+        keys.append(f"doi:{doi}")
+    title = normalize_title_key(clean_title(entry))
     if title:
-        return f"title:{title}"
-    ident = str(entry.get("ID") or "").strip()
-    if ident:
-        return f"id:{ident}"
-    return ""
+        keys.append(f"title:{title}")
+    if not keys:
+        ident = str(entry.get("ID") or "").strip()
+        if ident:
+            keys.append(f"id:{ident}")
+    return keys
 
 
 def dedupe_entries(
     entries: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
-    """Drop duplicate BibTeX entries (same DOI/title), keeping the first."""
+    """Drop duplicate BibTeX entries (same DOI or title), keeping the first."""
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []
     skipped: list[tuple[str, str]] = []
     for entry in entries:
-        key = entry_key(entry)
+        keys = entry_keys(entry)
         label = entry.get("ID") or entry.get("title") or "?"
-        if key and key in seen:
-            skipped.append((str(label), f"duplicate of existing key {key}"))
+        hit = next((k for k in keys if k in seen), None)
+        if hit:
+            skipped.append((str(label), f"duplicate of existing key {hit}"))
             continue
-        if key:
+        for key in keys:
             seen.add(key)
         unique.append(entry)
     return unique, skipped

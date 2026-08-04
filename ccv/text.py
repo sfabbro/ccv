@@ -177,6 +177,10 @@ def strip_latex(text: str | None) -> str:
     out = _LETTER_BRACED_RE.sub(_replace_letter, out)
     out = _LETTER_PLAIN_RE.sub(_replace_letter, out)
 
+    # \ensuremath{\Omega} / \Omega → keep the letter name for title matching.
+    out = re.sub(r"\\ensuremath\s*\{([^{}]+)\}", r"\1", out)
+    out = re.sub(r"\\(Omega|Lambda|alpha|beta|gamma|delta|mu)\b", r"\1", out)
+
     # Math-mode delimiters and leftover braces/backslashes.
     out = out.replace("$", "")
     out = out.replace("{", "").replace("}", "")
