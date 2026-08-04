@@ -5,7 +5,7 @@ de-duplicate them, and build an updated **Canadian Common CV (CCV)** XML file
 ready to import at <https://ccv-cvc.ca/> (Utilities → Import CV XML).
 
 This repo is self-contained: it includes the `ccv` package (originally based on
-[ijiraq/CCV](https://github.com/ijiraq/CCV)) plus a high-level `ccv_update.py`
+[ijiraq/CCV](https://github.com/ijiraq/CCV)) plus a high-level `ccv-update`
 wrapper that adds:
 
 1. **Automated retrieval** — ADS via the official ADS API, Google Scholar via
@@ -17,26 +17,31 @@ wrapper that adds:
    Chapters). The wrapper injects any missing managed publication template so
    `ccv build` works, then strips the leftover empty template from the output.
 
-You can also use the lower-level CLI directly:
+## Install
+
+With [pixi](https://pixi.sh/) (recommended):
 
 ```bash
-.venv/bin/python -m ccv build --base CCV-export.xml --bib papers.bib --out CCV-built.xml
-.venv/bin/python -m ccv summarize --base CCV-built.xml
+git clone https://github.com/sfabbro/ccv.git
+cd ccv
+pixi install
 ```
 
-## Install
+Or with pip / a venv:
 
 ```bash
 git clone https://github.com/sfabbro/ccv.git
 cd ccv
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e .
 ```
+
+Both install the `ccv` and `ccv-update` console scripts.
 
 ## Usage
 
 ```bash
-.venv/bin/python ccv_update.py \
+pixi run ccv-update \
     --base      CCV-export.xml \
     --out       CCV-updated.xml \
     --surname   Fabbro \
@@ -45,6 +50,16 @@ python3 -m venv .venv
     --since     2020-01 \
     --preserve-extra --validate --summarize
 ```
+
+Lower-level CLI (same environment):
+
+```bash
+pixi run ccv build --base CCV-export.xml --bib papers.bib --out CCV-built.xml
+pixi run ccv summarize --base CCV-built.xml
+```
+
+Without pixi, call `ccv-update` / `ccv` from the venv (or
+`python -m ccv.update ...` / `python ccv_update.py ...` from the repo root).
 
 ### Publication sources (combine freely; ADS wins on duplicates)
 
@@ -64,7 +79,7 @@ python3 -m venv .venv
   Contributions section back to Jan 1 six years prior, so use `--last-years 6`
   for a Discovery application
 - `--surname` — your surname(s); used to mark first/last authorship (default `Fabbro`)
-- `--no-name-check` — skip the family-name mismatch warning (see below)
+- `--no-name-check` — allow a family-name mismatch (default: **abort**)
 - `--preserve-extra` — keep base-CV publications absent from the BibTeX
   (otherwise they are removed)
 - `--overrides FILE` — YAML rules for invited/refereed/status/percentage
@@ -90,23 +105,22 @@ Authors already carrying a `*` are never double-marked.
 ### Name-mismatch safeguard
 
 The wrapper reads the **Family Name** from your base CCV's Personal Information
-section and warns — *before* any network fetch — when `--surname`, `--ads-author`,
+section and **aborts before any network fetch** when `--surname`, `--ads-author`,
 `--ads-query`, or `--gs-author` disagree with it:
 
 ```
-WARNING: name mismatch with base CCV — the run may be fetching someone else's publications!
+error: name mismatch with base CCV — refusing to fetch (would risk writing someone else's publications)
   base CCV Family Name: Fabbro
   - --ads-author 'Kavelaars, J' searches surnames ['kavelaars'] but the base CCV Family Name is 'Fabbro'
+  If intentional, pass --no-name-check.
 ```
 
-This catches the most damaging mistake (searching the wrong person's name). The
-warning does **not** stop the run; if you are deliberately updating someone
-else's CV, pass `--no-name-check`. CCVs without a Family Name field skip the
-check silently.
+CCVs without a Family Name field skip the check silently. To update someone
+else's CV on purpose, pass `--no-name-check`.
 
 ```bash
-# See exactly which authors would be marked, then decide:
-.venv/bin/python ccv_update.py \
+# Preview HQP asterisks without writing:
+pixi run ccv-update \
     --base CCV-export.xml --out CCV-updated.xml --surname Fabbro \
     --ads-bib ~/ads-export.bib --hqp-from-base --hqp-dry-run
 ```
@@ -135,6 +149,5 @@ check silently.
 
 ## Requirements
 
-- Python 3.10+ with dependencies from `requirements.txt` (`bibtexparser`,
-  `PyYAML`, `scholarly`)
+- Python 3.10+ (see `pyproject.toml`; installed by `pixi install` or `pip install -e .`)
 - A CCV account, an ADS API token (for `--ads-*` API mode), and/or BibTeX exports

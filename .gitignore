@@ -1,5 +1,6 @@
 # Python caches / local env
 .venv/
+.pixi/
 __pycache__/
 *.pyc
 
