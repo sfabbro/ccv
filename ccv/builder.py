@@ -45,6 +45,7 @@ def build_from_base(
     assign_record_ids: bool = False,
     overrides: Overrides | str | Path | None = None,
     preserve_extra: bool = False,
+    fill_percentage: bool = True,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Load *base_path*, replace publications from *bib_path*, write *out_path*."""
@@ -65,6 +66,7 @@ def build_from_base(
         assign_record_ids=assign_record_ids,
         overrides=load_overrides(overrides),
         preserve_extra=preserve_extra,
+        fill_percentage=fill_percentage,
         on_skip=on_skip if (verbose or preserve_extra) else None,
     )
     xmlutil.write_ccv(tree, out_path)

@@ -10,12 +10,15 @@ wrapper that adds:
 
 1. **Automated retrieval** — ADS via the official ADS API, Google Scholar via
    `scholarly` (best-effort) or a Scholar export file.
-2. **Merging + de-duplication** — all sources are combined into one BibTeX
-   stream; cross-source duplicates (by DOI, then title) are dropped, with ADS
-   entries taking precedence.
+2. **Merging + de-duplication** — sources are combined into one BibTeX stream;
+   cross-source duplicates are dropped by **DOI and normalized title** (ADS
+   first, so richer ADS metadata wins). Greek/LaTeX title variants (e.g. `Ω`
+   vs `\Omega`) are folded together.
 3. **Template repair** — real CCV exports often omit empty sections (e.g. Book
    Chapters). The wrapper injects any missing managed publication template so
-   `ccv build` works, then strips the leftover empty template from the output.
+   `build` works, then strips leftover empty templates from the output.
+4. **NSERC helpers** — six-year window, HQP `(*)` marking, and auto-fill of
+   empty Contribution Role / Percentage on preserved base records.
 
 ## Install
 
@@ -40,22 +43,45 @@ Both install the `ccv` and `ccv-update` console scripts.
 
 ## Usage
 
+**Full career** (no year cutoff) — ADS ORCID + Scholar scrape:
+
 ```bash
+export ADS_API_TOKEN=...   # ADS → Settings → API Token
 pixi run ccv-update \
     --base      CCV-export.xml \
     --out       CCV-updated.xml \
     --surname   Fabbro \
-    --ads-token "$ADS_API_TOKEN" --ads-author "Fabbro, S" \
-    --gs-bib    ~/google-scholar-export.bib \
-    --since     2020-01 \
-    --preserve-extra --validate --summarize
+    --ads-orcid 0000-0003-2239-7988 \
+    --gs-author "Sebastien Fabbro" \
+    --gs-timeout 120 \
+    --preserve-extra --hqp-from-base --no-percentage \
+    --validate --summarize
 ```
 
-Lower-level CLI (same environment):
+**NSERC Discovery window** (Jan 1 of six years prior through now):
+
+```bash
+pixi run ccv-update \
+    --base      CCV-export.xml \
+    --out       CCV-nserc.xml \
+    --surname   Fabbro \
+    --ads-orcid 0000-0003-2239-7988 \
+    --gs-author "Sebastien Fabbro" \
+    --last-years 6 \
+    --preserve-extra --hqp-from-base --no-percentage \
+    --validate --summarize
+```
+
+Prefer `--ads-orcid` over a broad `--ads-author` when you have an ORCID (cleaner
+match set). For reliable Scholar input without scraping, use
+`--gs-bib ~/scholar-export.bib` instead of `--gs-author`.
+
+Lower-level CLI:
 
 ```bash
 pixi run ccv build --base CCV-export.xml --bib papers.bib --out CCV-built.xml
 pixi run ccv summarize --base CCV-built.xml
+pixi run python check_gs_authors.py   # self-check: Scholar authors + dedupe
 ```
 
 Without pixi, call `ccv-update` / `ccv` from the venv (or
@@ -66,22 +92,30 @@ Without pixi, call `ccv-update` / `ccv` from the venv (or
 | Flag | Meaning |
 |---|---|
 | `--ads-token` / `$ADS_API_TOKEN` | ADS API token (ADS → Settings → API Token) |
-| `--ads-author`, `--ads-orcid`, `--ads-query`, `--ads-bibcodes` | what to search ADS for. `--ads-author` takes ADS phrases like `"Fabbro, S"` (initials stay glued to the surname; a second comma-separated surname adds an OR, e.g. `"Fabbro, Kavelaars"`) |
+| `--ads-orcid` | ORCID iD (recommended) |
+| `--ads-author`, `--ads-query`, `--ads-bibcodes` | ADS search alternatives. `--ads-author` takes phrases like `"Fabbro, S"` (initials stay glued to the surname; a second comma-separated surname adds an OR, e.g. `"Fabbro, Kavelaars"`) |
 | `--ads-bib FILE` | skip the API; use an existing ADS BibTeX export |
-| `--gs-author NAME` | scrape Google Scholar (best-effort, throttled; use a short `--gs-timeout`) |
-| `--gs-bib FILE` | Scholar export file (My Library → Export → BibTeX) — reliable, recommended |
+| `--gs-author NAME` | scrape Google Scholar (best-effort, throttled; use a generous `--gs-timeout`) |
+| `--gs-bib FILE` | Scholar export file (My Library → Export → BibTeX) — reliable |
 | `--bib FILE` | any other local `.bib` file |
+
+Yearless Scholar snippets are skipped (CCV/NSERC need a Year). Prefer ADS for
+authoritative metadata; Scholar mainly fills gaps ADS missed.
 
 ### Build options
 
 - `--since YYYY[-MM]` — only include entries on/after the cutoff
-- `--last-years N` — keep only the last N years; NSERC validates the
-  Contributions section back to Jan 1 six years prior, so use `--last-years 6`
-  for a Discovery application
+- `--last-years N` — keep only the last N years; NSERC validates Contributions
+  back to Jan 1 six years prior, so use `--last-years 6` for Discovery
 - `--surname` — your surname(s); used to mark first/last authorship (default `Fabbro`)
 - `--no-name-check` — allow a family-name mismatch (default: **abort**)
 - `--preserve-extra` — keep base-CV publications absent from the BibTeX
-  (otherwise they are removed)
+  (otherwise they are removed). With `--since` / `--last-years`, preserved
+  rows outside the window are dropped. Empty Contribution Role on preserved
+  rows is filled from authorship heuristics.
+- `--no-percentage` — leave **Contribution Percentage** blank (do not apply
+  first/last/co heuristic bands). Role is still filled. Use this when % varies
+  by field practice and you prefer to set it in the CCV UI.
 - `--overrides FILE` — YAML rules for invited/refereed/status/percentage
 
 ### NSERC-specific options
@@ -127,23 +161,37 @@ pixi run ccv-update \
 
 ### Checks
 
-- `--validate` — report publications missing CCV-required fields
+- `--validate` — report publications missing core CCV fields (Year, Authors,
+  Journal/Conference, Contribution Role, Refereed?). Contribution Percentage
+  is optional and not flagged.
 - `--validate-max N` — limit the number of issues printed (default 25)
 - `--strict` — exit non-zero when `--validate` finds issues
-- `--summarize` — print section counts of the output
+- `--summarize` — print section counts + Discovery-oriented metrics
+
+## Import / verify on ccv-cvc.ca
+
+There is no offline CCV UI preview. To see the result:
+
+1. Sign in at <https://ccv-cvc.ca/>.
+2. **Utilities → Export** — save a backup of your current CV.
+3. **Utilities → Import CV XML** — upload the generated file (e.g. `CCV-updated.xml`).
+4. Prefer replacing **Publications** (and related contribution sections) first
+   if you want a cautious merge.
+5. Open **Contributions → Publications** and spot-check years, HQP `(*)`, and
+   Contribution Role / Percentage.
+6. For NSERC, link this CCV in the Research Portal and confirm the six-year
+   filter does not flag errors (use a `--last-years 6` build for that attach).
+
+If the import looks wrong, re-import the backup from step 2.
 
 ## Notes
 
-- **Validation flags are pre-existing.** A `--validate` report mostly flags
-  empty Contribution Role/Percentage on records that were already in your base
-  CCV export; the wrapper does not introduce them. Fill these in the CCV UI.
-- **Schema verified.** All field IDs and LOV IDs used by the `ccv` package were
-  cross-checked against the official CCV schema (`ccv-cvc.ca/schema/dataset-cv.xml`,
-  `dataset-cv-lov.xml`) and against the user's own export — all match. Re-run with:
+- **Schema verified.** Field IDs and LOV IDs in the `ccv` package were
+  cross-checked against the official CCV schema and a real user export. Re-run:
   `python check_schema.py CCV-export.xml . /path/to/dataset-cv-lov.xml`.
 - **Google Scholar has no official API.** The `scholarly` scrape works from
-  residential IPs but is often throttled/blocked from cloud hosts. For reliable
-  automation use `--gs-bib` with a Scholar export, or use ADS only.
+  residential IPs but is often throttled/blocked from cloud hosts. Prefer
+  `--gs-bib` or ADS-only for automation.
 - The merged BibTeX that produced the output is written next to `--out` as
   `<out>.sources.bib` for inspection/backup.
 

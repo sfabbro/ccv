@@ -21,13 +21,12 @@ _REQUIRED_TEXT_FIELDS = {
 }
 
 _REQUIRED_LOV_FIELDS = {
-    "Journal Articles": ("Contribution Role", "Contribution Percentage", "Refereed?"),
+    "Journal Articles": ("Contribution Role", "Refereed?"),
     "Conference Publications": (
         "Contribution Role",
-        "Contribution Percentage",
         "Refereed?",
     ),
-    "Book Chapters": ("Contribution Role", "Contribution Percentage", "Refereed?"),
+    "Book Chapters": ("Contribution Role", "Refereed?"),
 }
 
 

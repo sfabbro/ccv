@@ -78,6 +78,7 @@ def field_value_map(
     entrytype: str,
     author_surnames: tuple[str, ...],
     overrides: Overrides,
+    fill_percentage: bool = True,
 ) -> dict[str, str | None]:
     """Map CCV field labels to string/LOV labels for one BibTeX entry."""
     n_contributors = contributor_count(entry)
@@ -93,14 +94,16 @@ def field_value_map(
 
     status = overrides.status(entry) or "Published"
     conf_type = overrides.conference_type(entry) or "Abstract"
-    pct = overrides.percentage(entry)
-    if not pct:
-        pct = contribution_percentage(
-            entry,
-            position=position,
-            n_contributors=n_contributors,
-            defaults=overrides.percentage_defaults(),
-        )
+    pct: str | None = None
+    if fill_percentage:
+        pct = overrides.percentage(entry)
+        if not pct:
+            pct = contribution_percentage(
+                entry,
+                position=position,
+                n_contributors=n_contributors,
+                defaults=overrides.percentage_defaults(),
+            )
 
     open_access = overrides.open_access(entry)
 
@@ -149,6 +152,7 @@ def fill_record(
     author_surnames: tuple[str, ...],
     overrides: Overrides,
     assign_record_id: bool = False,
+    fill_percentage: bool = True,
 ) -> None:
     known_fields = FIELDS_BY_ENTRYTYPE[entrytype]
     values = field_value_map(
@@ -156,6 +160,7 @@ def fill_record(
         entrytype=entrytype,
         author_surnames=author_surnames,
         overrides=overrides,
+        fill_percentage=fill_percentage,
     )
     xmlutil.strip_record_id(record)
     if assign_record_id:
@@ -167,6 +172,9 @@ def fill_record(
             continue
         raw = values[label]
         if raw is None:
+            # Drop template-copied percentage when --no-percentage.
+            if label == "Contribution Percentage" and not fill_percentage:
+                xmlutil.clear_lov(field)
             continue
 
         if label in LOV_FIELD_LABELS:
@@ -232,10 +240,13 @@ def fill_missing_contribution_fields(
     tree,
     author_surnames: tuple[str, ...],
     overrides: Overrides | None = None,
+    *,
+    fill_percentage: bool = True,
 ) -> int:
-    """Fill empty Contribution Role/Percentage on preserved base records.
+    """Fill empty Contribution Role (and optional Percentage) on preserved records.
 
-    Base CCV exports often leave these blank; NSERC CCV validation wants them.
+    Base CCV exports often leave Role blank; NSERC cares more about role than
+    about heuristic percentage bands.
     """
     overrides = overrides or Overrides()
     pubs = xmlutil.find_section(tree.getroot(), "Publications")
@@ -248,7 +259,9 @@ def fill_missing_contribution_fields(
         role_field = xmlutil.field_by_label(record, "Contribution Role")
         pct_field = xmlutil.field_by_label(record, "Contribution Percentage")
         need_role = not xmlutil.lov_label(role_field)
-        need_pct = not xmlutil.lov_label(pct_field)
+        need_pct = fill_percentage and not xmlutil.lov_label(pct_field)
+        if fill_percentage is False and pct_field is not None:
+            xmlutil.clear_lov(pct_field)
         if not need_role and not need_pct:
             continue
         authors = xmlutil.value_text(xmlutil.field_by_label(record, "Authors"))
@@ -288,6 +301,7 @@ def replace_publications(
     assign_record_ids: bool = False,
     overrides: Overrides | None = None,
     preserve_extra: bool = False,
+    fill_percentage: bool = True,
     on_skip: Callable[[dict[str, Any], str], None] | None = None,
 ) -> dict[str, Any]:
     """Replace managed publication types in *tree* from BibTeX *entries*.
@@ -389,6 +403,7 @@ def replace_publications(
             author_surnames=author_surnames,
             overrides=overrides,
             assign_record_id=assign_record_ids,
+            fill_percentage=fill_percentage,
         )
         publications.append(record)
         counts[label] += 1
@@ -418,8 +433,10 @@ def replace_publications(
                 else:
                     removed.append(keys[0] if keys else "<unkeyed>")
             # else: matched and replaced by a fresh record (counted as updated)
-    if preserve_extra:
-        fill_missing_contribution_fields(tree, author_surnames, overrides)
+    if preserve_extra or not fill_percentage:
+        fill_missing_contribution_fields(
+            tree, author_surnames, overrides, fill_percentage=fill_percentage
+        )
     return {
         "publication_counts": counts,
         "added": added,

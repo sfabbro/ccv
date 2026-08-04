@@ -700,6 +700,7 @@ def run(args: argparse.Namespace) -> int:
         assign_record_ids=args.assign_record_ids,
         overrides=builder.load_overrides(args.overrides),
         preserve_extra=args.preserve_extra,
+        fill_percentage=not args.no_percentage,
         on_skip=on_skip if (args.verbose or args.preserve_extra) else None,
     )
 
@@ -809,6 +810,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="YAML overrides file (invited/refereed/status/percentage rules)")
     parser.add_argument("--preserve-extra", action="store_true",
                         help="Keep base publications absent from the merged BibTeX instead of deleting")
+    parser.add_argument("--no-percentage", action="store_true",
+                        help="Leave Contribution Percentage blank (skip authorship "
+                        "heuristic bands; fill Role only). Recommended when field "
+                        "norms vary and you set %% by hand in the CCV UI.")
     parser.add_argument("--assign-record-ids", action="store_true",
                         help="Assign new recordId attributes to rebuilt records")
     parser.add_argument("--last-years", type=int, default=None,

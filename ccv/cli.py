@@ -25,6 +25,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         assign_record_ids=args.assign_record_ids,
         overrides=args.overrides,
         preserve_extra=args.preserve_extra,
+        fill_percentage=not args.no_percentage,
         verbose=args.verbose,
     )
     counts = result["publication_counts"]
@@ -164,6 +165,8 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--preserve-extra", action="store_true",
                        help="Keep base publications that are absent from the BibTeX "
                        "instead of deleting them")
+    build.add_argument("--no-percentage", action="store_true",
+                       help="Leave Contribution Percentage blank")
     build.add_argument("--assign-record-ids", action="store_true",
                        help="Assign new recordId attributes (default: omit them)")
     build.add_argument("-v", "--verbose", action="store_true")

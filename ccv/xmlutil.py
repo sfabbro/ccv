@@ -109,6 +109,15 @@ def set_lov(field: ET.Element, label: str, lov_id: str) -> None:
     lov.text = label
 
 
+def clear_lov(field: ET.Element | None) -> None:
+    """Remove any <lov> child so the field is unset."""
+    if field is None:
+        return
+    for child in list(field):
+        if local_name(child.tag) == "lov":
+            field.remove(child)
+
+
 def value_text(field: ET.Element | None) -> str:
     """Read the string value of a field (value / bilingual/english)."""
     if field is None:
