@@ -61,7 +61,7 @@ channels = ["conda-forge"]
 platforms = ["linux-64", "osx-64", "osx-arm64"]
 
 [tool.pixi.dependencies]
-python = ">=3.10,<3.14"
+python = "3.13.*"
 
 [tool.pixi.pypi-dependencies]
 ccv = { path = ".", editable = true }
