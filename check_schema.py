@@ -77,6 +77,7 @@ for tlabel, smap in schema_maps.items():
         a = actual.get(fname)
         if a is None:
             missing += 1
+            print(f"      {fname}: absent from this export")
         elif a == fid:
             ok += 1
         else:
@@ -85,6 +86,10 @@ for tlabel, smap in schema_maps.items():
     print(f"      -> {ok} match, {bad} MISMATCH, {missing} absent")
 
 print("\n=== LOV ids (fixed table-aware check) ===")
+if not Path(LOV_FILE).is_file():
+    print(f"  skipped: {LOV_FILE} not found")
+    print("  download https://ccv-cvc.ca/schema/dataset-cv-lov.xml to check LOV ids")
+    raise SystemExit(0)
 lov_tree = ET.parse(LOV_FILE)
 official = {}
 for table in lov_tree.getroot().iter():

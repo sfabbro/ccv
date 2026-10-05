@@ -115,4 +115,11 @@ titles = [
 ]
 assert titles.count("Unique Paper") == 1, titles
 assert all(t != "Template Only" for t in titles), titles
+
+# New LOV nodes must be unprefixed, matching official CCV exports.
+# Prefixed <generic-cv:lov> is dropped on import (Contribution Role came back blank).
+field = ET.Element("field")
+xmlutil.set_lov(field, "Co-Author", "00000000000000000000000100002102")
+blob = ET.tostring(field, encoding="unicode")
+assert "<lov " in blob and "generic-cv:lov" not in blob, blob
 print("ok")

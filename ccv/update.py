@@ -228,7 +228,6 @@ def ensure_publication_templates(tree: ET.ElementTree) -> list[str]:
         "Conference Publications": schema.PROCEEDINGS_FIELDS,
         "Book Chapters": schema.CHAPTER_FIELDS,
     }
-    ns = schema.NS
     root = tree.getroot()
     pubs = xmlutil.find_section(root, "Publications")
     if pubs is None:
@@ -239,17 +238,17 @@ def ensure_publication_templates(tree: ET.ElementTree) -> list[str]:
     for label in schema.MANAGED_PUBLICATION_LABELS:
         if label in present:
             continue
-        section = ET.SubElement(pubs, f"{{{ns}}}section")
+        section = ET.SubElement(pubs, xmlutil.child_tag(pubs, "section"))
         section.set("label", label)
         section.set("id", schema.SECTION_IDS[label])
         for field_name, field_id in fields_by_label[label].items():
-            field = ET.SubElement(section, f"{{{ns}}}field")
+            field = ET.SubElement(section, xmlutil.child_tag(section, "field"))
             field.set("label", field_name)
             field.set("id", field_id)
             if field_name in schema.LOV_FIELD_LABELS:
-                ET.SubElement(field, f"{{{ns}}}lov")
+                ET.SubElement(field, xmlutil.child_tag(field, "lov"))
             else:
-                value = ET.SubElement(field, f"{{{ns}}}value")
+                value = ET.SubElement(field, xmlutil.child_tag(field, "value"))
                 value.set("type", "String")
         added.append(label)
     return added

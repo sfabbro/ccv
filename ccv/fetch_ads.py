@@ -20,6 +20,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+try:
+    import certifi
+except ImportError:  # optional; scholarly/requests usually pull it in
+    certifi = None
+
 SEARCH_URL = "https://api.adsabs.harvard.edu/v1/search/query"
 EXPORT_URL = "https://api.adsabs.harvard.edu/v1/export/bibtex"
 
@@ -56,12 +61,20 @@ def split_ads_authors(raw: str) -> list[str]:
 
 
 def _context() -> ssl.SSLContext:
-    ctx = ssl.create_default_context()
     # Debugging aid for environments with broken CA bundles (e.g. sandboxes).
     if os.environ.get("CCV_ADS_INSECURE") == "1":
+        ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-    return ctx
+        return ctx
+    # conda/pixi OpenSSL often points at a prefix that no longer exists after
+    # the checkout moves. certifi ships a current bundle with the env.
+    if certifi is not None and os.path.isfile(certifi.where()):
+        return ssl.create_default_context(cafile=certifi.where())
+    system = "/etc/ssl/cert.pem"
+    if os.path.isfile(system):
+        return ssl.create_default_context(cafile=system)
+    return ssl.create_default_context()
 
 
 def _request(url: str, *, token: str, payload: dict[str, Any] | None = None) -> Any:

@@ -76,6 +76,20 @@ def _find_child(parent: ET.Element, name: str) -> ET.Element | None:
     return None
 
 
+def child_tag(parent: ET.Element, name: str) -> str:
+    """Tag for a new child, matching the parent's namespace.
+
+    Official CCV exports namespace only the root (`generic-cv:generic-cv`).
+    Every other element is unprefixed (`<lov>`, `<value>`, `<section>`).
+    A prefixed `<generic-cv:lov>` is dropped on import, which is why
+    Contribution Role came back blank after a round-trip.
+    """
+    tag = parent.tag
+    if tag.startswith("{") and "}" in tag:
+        return f"{{{tag[1:tag.index('}')]}}}{name}"
+    return name
+
+
 def set_value_text(field: ET.Element, text: str | None) -> None:
     """Set a <value> field, and mirror into bilingual/english when present."""
     if text is None:
@@ -83,17 +97,17 @@ def set_value_text(field: ET.Element, text: str | None) -> None:
     value = _find_child(field, "value")
     bilingual = _find_child(field, "bilingual")
     if value is None and bilingual is None:
-        value = ET.SubElement(field, f"{{{NS}}}value")
+        value = ET.SubElement(field, child_tag(field, "value"))
         value.set("type", "String")
     if value is not None:
         value.text = text
     if bilingual is not None:
         english = _find_child(bilingual, "english")
         if english is None:
-            english = ET.SubElement(bilingual, f"{{{NS}}}english")
+            english = ET.SubElement(bilingual, child_tag(bilingual, "english"))
         english.text = text
         if _find_child(bilingual, "french") is None:
-            ET.SubElement(bilingual, f"{{{NS}}}french")
+            ET.SubElement(bilingual, child_tag(bilingual, "french"))
 
 
 def set_lov(field: ET.Element, label: str, lov_id: str) -> None:
@@ -104,7 +118,7 @@ def set_lov(field: ET.Element, label: str, lov_id: str) -> None:
             field.remove(child)
     lov = _find_child(field, "lov")
     if lov is None:
-        lov = ET.SubElement(field, f"{{{NS}}}lov")
+        lov = ET.SubElement(field, child_tag(field, "lov"))
     lov.set("id", lov_id)
     lov.text = label
 
