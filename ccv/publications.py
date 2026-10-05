@@ -10,14 +10,17 @@ from . import xmlutil
 from .bibtex_io import (
     author_position,
     clean_title,
+    entry_has_surname,
     contributor_count,
     dedupe_entries,
     entry_keys,
     format_authors_for_ccv,
     journal_name,
     month_number,
+    is_shortened_title,
     normalize_title_key,
     parse_name,
+    titles_equivalent,
 )
 from .overrides import Overrides
 from .schema import (
@@ -340,20 +343,37 @@ def replace_publications(
         if on_skip:
             on_skip({"ID": key}, reason)
 
-    # key -> full key-set for the base record that owns it (so a title hit
-    # also clears that record's DOI key, and vice versa).
+    def record_title(record) -> str:
+        title_field = _TITLE_FIELD_BY_LABEL.get(record.get("label", ""), "Article Title")
+        return xmlutil.value_text(xmlutil.field_by_label(record, title_field))
+
+    # Scholar sometimes stores a shortened title and drops the surname.
+    # Keep the fuller record already on the CV or earlier in the bib.
+    kept_entries: list[dict[str, Any]] = []
+    base_titles = [
+        record_title(element)
+        for records in base_records.values()
+        for element, _keys in records
+    ]
+    for entry in entries:
+        title = clean_title(entry)
+        if not entry_has_surname(entry, author_surnames) and (
+            any(is_shortened_title(title, other) for other in base_titles)
+            or any(is_shortened_title(title, clean_title(other)) for other in kept_entries)
+        ):
+            if on_skip:
+                on_skip(entry, "shortened title of an existing paper; surname absent")
+            continue
+        kept_entries.append(entry)
+    entries = kept_entries
+
+    # Keys still belonging to a base row. A title hit clears that row's DOI too.
     base_key_set: dict[str, set[str]] = {label: set() for label in MANAGED_PUBLICATION_LABELS}
-    base_key_groups: dict[str, dict[str, frozenset[str]]] = {
-        label: {} for label in MANAGED_PUBLICATION_LABELS
-    }
     for label, records in base_records.items():
         for _element, keys in records:
             group = frozenset(k for k in keys if k)
-            if not group:
-                continue
-            base_key_set[label].update(group)
-            for k in group:
-                base_key_groups[label][k] = group
+            if group:
+                base_key_set[label].update(group)
 
     counts = {label: 0 for label in MANAGED_PUBLICATION_LABELS}
     added: list[str] = []
@@ -383,15 +403,23 @@ def replace_publications(
                 on_skip(entry, "before --since cutoff")
             continue
         keys = entry_keys(entry)
-        matched_group: frozenset[str] | None = None
-        for k in keys:
-            matched_group = base_key_groups[label].get(k)
-            if matched_group is not None:
-                break
-        if matched_group is not None:
-            for k in matched_group:
+        entry_title = clean_title(entry)
+        matched = False
+        # Retire every base row that is this paper, including a second copy
+        # whose title differs by one word. An exact hit only clears one row.
+        for element, rec_keys in base_records[label]:
+            group = frozenset(k for k in rec_keys if k)
+            if not group or not any(k in base_key_set[label] for k in group):
+                continue
+            same = any(k in group for k in keys) or titles_equivalent(
+                entry_title, record_title(element)
+            )
+            if not same:
+                continue
+            matched = True
+            for k in group:
                 base_key_set[label].discard(k)
-                base_key_groups[label].pop(k, None)
+        if matched:
             updated.append(keys[0] if keys else entry.get("ID") or "?")
         else:
             added.append(keys[0] if keys else entry.get("ID") or "?")

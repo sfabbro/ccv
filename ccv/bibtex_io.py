@@ -110,6 +110,11 @@ def is_author(raw: str, surnames: tuple[str, ...]) -> bool:
     return False
 
 
+def entry_has_surname(entry: dict[str, Any], surnames: tuple[str, ...]) -> bool:
+    """True if any author is one of *surnames*, not only first or last."""
+    return any(is_author(author, surnames) for author in parse_author_list(entry.get("author") or ""))
+
+
 def author_position(entry: dict[str, Any], surnames: tuple[str, ...]) -> int | None:
     """Return 0 if the user is first author, -1 if last author, else None."""
     authors = parse_author_list(entry.get("author", ""))
@@ -154,17 +159,74 @@ _TITLE_FOLDS = (
 )
 
 
-def normalize_title_key(title: str) -> str:
-    """ASCII-ish title fingerprint for cross-source dedupe (ADS ↔ Scholar)."""
+def _title_text(title: str) -> str:
     text = strip_latex(title)
     text = unicodedata.normalize("NFKD", text)
     text = "".join(c for c in text if not unicodedata.combining(c))
     text = text.lower()
     for src, dst in _TITLE_FOLDS:
         text = text.replace(src, dst)
-    # leftover 'ensuremathomega' etc. after strip_latex
-    text = re.sub(r"ensuremath", "", text)
-    return re.sub(r"[^a-z0-9]+", "", text)
+    return re.sub(r"ensuremath", "", text)
+
+
+def normalize_title_key(title: str) -> str:
+    """ASCII-ish title fingerprint for cross-source dedupe (ADS ↔ Scholar)."""
+    return re.sub(r"[^a-z0-9]+", "", _title_text(title))
+
+
+def _title_words(title: str) -> list[str]:
+    words = re.findall(r"[a-z0-9]+", _title_text(title))
+    if words and words[0] == "the":
+        words = words[1:]
+    while words and words[-1].isdigit():
+        words.pop()
+    return words
+
+
+def titles_equivalent(a: str, b: str) -> bool:
+    """True when two titles are the same paper under a small wording change.
+
+    Matches a leading 'The', one inserted word ('inclusive', 'Population'),
+    a trailing plural, or a volume/page tail glued onto the title
+    ('..., 645 (2): 841-850'). An extra word at the front ('CANFAR:',
+    'StarNet:') does not match: that is often a different record.
+    """
+    wa, wb = _title_words(a), _title_words(b)
+    if not wa or not wb:
+        return False
+    if wa == wb:
+        return True
+    if abs(len(wa) - len(wb)) == 1:
+        short, long = (wa, wb) if len(wa) < len(wb) else (wb, wa)
+        for i in range(1, len(long)):  # not a new first word
+            if long[:i] + long[i + 1 :] == short:
+                return True
+        return False
+    if len(wa) == len(wb):
+        diffs = [(x, y) for x, y in zip(wa, wb) if x != y]
+        if len(diffs) == 1:
+            x, y = diffs[0]
+            return x + "s" == y or y + "s" == x
+    return False
+
+
+def is_shortened_title(short: str, long: str, max_extra: int = 4) -> bool:
+    """True when *short* is *long* with a few words dropped, same opening.
+
+    'Detecting ringed seal vocalizations using deep learning' is the
+    Scholar shortening of '... in multiple environments using deep learning'.
+    """
+    a, b = _title_words(short), _title_words(long)
+    extra = len(b) - len(a)
+    # One extra word is titles_equivalent (keep the incoming row). This is
+    # only the case of several dropped words, and only when *short* is shorter.
+    if len(a) < 6 or extra < 2 or extra > max_extra or a[:4] != b[:4]:
+        return False
+    i = 0
+    for word in b:
+        if i < len(a) and word == a[i]:
+            i += 1
+    return i == len(a)
 
 
 def entry_key(entry: dict[str, Any]) -> str:
@@ -198,16 +260,21 @@ def dedupe_entries(
 ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
     """Drop duplicate BibTeX entries (same DOI or title), keeping the first."""
     seen: set[str] = set()
+    accepted_titles: list[str] = []
     unique: list[dict[str, Any]] = []
     skipped: list[tuple[str, str]] = []
     for entry in entries:
         keys = entry_keys(entry)
+        title = clean_title(entry)
         label = entry.get("ID") or entry.get("title") or "?"
         hit = next((k for k in keys if k in seen), None)
+        if hit is None and any(titles_equivalent(title, prev) for prev in accepted_titles):
+            hit = "title:~"
         if hit:
             skipped.append((str(label), f"duplicate of existing key {hit}"))
             continue
         for key in keys:
             seen.add(key)
+        accepted_titles.append(title)
         unique.append(entry)
     return unique, skipped
