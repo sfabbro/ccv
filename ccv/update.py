@@ -863,7 +863,7 @@ def run(args: argparse.Namespace) -> int:
         fill_percentage=not args.no_percentage,
         on_skip=on_skip if (args.verbose or args.preserve_extra) else None,
         trainees=trainees,
-        keep_unverified_scholar=args.keep_unverified_scholar,
+        drop_unverified_scholar=args.drop_unverified_scholar,
     )
     built_marks = result["hqp_marks"]
     kept_records = result["kept_records"]
@@ -928,7 +928,7 @@ def run(args: argparse.Namespace) -> int:
     if result.get("scholar_dropped"):
         print(f"Scholar entries dropped (owner not in truncated author list): "
               f"{len(result['scholar_dropped'])} (use -v for details, "
-              "--keep-unverified-scholar to keep)")
+              "rerun without --drop-unverified-scholar to keep)")
     if skipped:
         print(f"Skipped: {len(skipped)} entry/entries")
         if args.verbose:
@@ -1031,9 +1031,10 @@ def build_parser() -> argparse.ArgumentParser:
     gs.add_argument("--no-scholar-ads-lookup", action="store_true",
                     help="Do not replace Scholar-only papers by their ADS records "
                     "(looked up by title; needs an ADS token)")
-    gs.add_argument("--keep-unverified-scholar", action="store_true",
-                    help="Keep Scholar snippets whose (truncated) author list "
-                    "lacks your surname (default: drop them)")
+    gs.add_argument("--drop-unverified-scholar", action="store_true",
+                    help="Drop Scholar snippets, and preserved Scholar rows, whose "
+                    "truncated author list lacks your surname (default: keep them "
+                    "and report them with --validate)")
 
     parser.add_argument("--bib", type=Path, default=None, help="Any extra local .bib file to include")
     parser.add_argument("--validate", action="store_true", help="Validate the output Publications section")

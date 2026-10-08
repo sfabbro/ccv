@@ -385,7 +385,7 @@ def replace_publications(
     fill_percentage: bool = True,
     on_skip: Callable[[dict[str, Any], str], None] | None = None,
     trainees: list[Trainee] | None = None,
-    keep_unverified_scholar: bool = False,
+    drop_unverified_scholar: bool = False,
 ) -> dict[str, Any]:
     """Replace managed publication types in *tree* from BibTeX *entries*.
 
@@ -420,7 +420,7 @@ def replace_publications(
 
     entries = [dict(e) for e in entries]
     scholar_skips: list[tuple[dict[str, Any], str]] = []
-    if not keep_unverified_scholar:
+    if drop_unverified_scholar:
         entries, scholar_skips = screen_scholar_entries(entries, author_surnames)
     for entry, reason in scholar_skips:
         if on_skip:
@@ -561,7 +561,7 @@ def replace_publications(
                         if not year or (year, 1) < since:
                             removed.append(keys[0] if keys else "<unkeyed>")
                             continue
-                    reason = _preserved_problem(element, author_surnames)
+                    reason = _preserved_problem(element, author_surnames) if drop_unverified_scholar else ""
                     if reason:
                         removed.append(keys[0] if keys else "<unkeyed>")
                         dropped_preserved.append((record_title(element), reason))

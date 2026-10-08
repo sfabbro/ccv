@@ -218,7 +218,7 @@ def test_scholar_snippet_typing_and_urls():
     assert venue_entrytype("Monthly Notices of the Royal Astronomical Society") == "article"
 
 
-def test_scholar_entry_without_owner_is_dropped_and_never_replaces_base():
+def test_scholar_entry_without_owner_is_dropped_on_request_and_never_replaces_base():
     tree, pubs = _tree()
     _templates(pubs)
     _record(pubs, "Conference Publications", "Interpreting Stellar Spectra with Unsupervised Domain Adaptation",
@@ -230,7 +230,7 @@ def test_scholar_entry_without_owner_is_dropped_and_never_replaces_base():
         {"ID": "ScholarInterp", "ENTRYTYPE": "article",
          "title": "Interpreting Stellar Spectra with Unsupervised Domain Adaptation",
          "author": "T OBriain and S Fabbro", "year": "2020", "journal": "arXiv preprint arXiv …"},
-    ], author_surnames=("Fabbro",), preserve_extra=True)
+    ], author_surnames=("Fabbro",), preserve_extra=True, drop_unverified_scholar=True)
     assert result["scholar_dropped"] == ["ScholarC19"]
     titles = [(r.get("label"), _val(r, TITLE_FIELD[r.get("label")])) for r in _records(pubs)]
     assert ("Conference Publications",
@@ -238,7 +238,7 @@ def test_scholar_entry_without_owner_is_dropped_and_never_replaces_base():
     assert not any("Interpreting" in t for label, t in titles if label == "Journal Articles")
 
 
-def test_preserved_scholar_artefacts_dropped_and_repaired():
+def test_preserved_scholar_artefacts_dropped_on_request_and_repaired():
     tree, pubs = _tree()
     _templates(pubs)
     _record(pubs, "Journal Articles", "Lensing without mass", record_id="r1",
@@ -246,7 +246,8 @@ def test_preserved_scholar_artefacts_dropped_and_repaired():
     _record(pubs, "Journal Articles", "CANFAR: A Community-Built Astronomy Platform",
             record_id="r2", authors="Major, B., Fabbro, S., & Kavelaars, J.",
             venue="… Society of the …", extra={"URL": "/scholar?output=instlink"})
-    result = replace_publications(tree, [], author_surnames=("Fabbro",), preserve_extra=True)
+    result = replace_publications(tree, [], author_surnames=("Fabbro",), preserve_extra=True,
+                                  drop_unverified_scholar=True)
     titles = [_val(r, "Article Title") for r in _records(pubs, "Journal Articles")]
     assert "Lensing without mass" not in titles
     canfar = next(r for r in _records(pubs) if _val(r, "Article Title").startswith("CANFAR"))
@@ -380,3 +381,14 @@ def test_annotate_bibtex_is_idempotent():
     twice = annotate_bibtex(once, docs)
     assert once == twice
     assert once.count("adsrefereed = {yes}") == 1
+
+
+def test_unverified_scholar_rows_kept_by_default():
+    tree, pubs = _tree()
+    _templates(pubs)
+    _record(pubs, "Journal Articles", "The primordial nature of the C-19 stellar stream",
+            record_id="r1", authors="Venn, K., Yuan, Z., & Martin, N.", venue="arXiv preprint arXiv …")
+    result = replace_publications(tree, [], author_surnames=("Fabbro",), preserve_extra=True)
+    titles = [_val(r, "Article Title") for r in _records(pubs, "Journal Articles")]
+    assert "The primordial nature of the C-19 stellar stream" in titles
+    assert not result["dropped_preserved"]

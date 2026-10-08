@@ -109,13 +109,13 @@ authoritative metadata; Scholar mainly fills gaps ADS missed.
 Scholar search results abbreviate author lists and venues. With an ADS token,
 every Scholar-only paper is looked up in ADS by title (requiring your
 surname) and replaced by the ADS record. Scholar snippets that still lack
-your surname are dropped (`--keep-unverified-scholar` keeps them), and a
+your surname are kept and reported by `--validate` (`--drop-unverified-scholar` drops them), and a
 Scholar snippet never replaces a record already on the CV.
 
 | Flag | Meaning |
 |---|---|
 | `--no-scholar-ads-lookup` | skip the ADS title look-up for Scholar-only papers and Scholar-artefact rows |
-| `--keep-unverified-scholar` | keep Scholar snippets whose truncated author list lacks your surname |
+| `--drop-unverified-scholar` | drop Scholar snippets and preserved Scholar rows whose truncated author list lacks your surname (default: keep and report) |
 
 ### Build options
 
@@ -205,8 +205,10 @@ pixi run ccv-update \
 - **Duplicates across sections**: a paper is matched by DOI, arXiv id or title
   against journal *and* conference rows; an arXiv preprint never replaces a
   published version.
-- **Preserved rows** (`--preserve-extra`): Scholar artefacts without your
-  name are dropped (reported as "Dropped from CV"), preprint duplicates of
+- **Preserved rows** (`--preserve-extra`): Scholar artefacts whose truncated
+  author list omits you are kept and flagged by `--validate` (ADS replaces
+  them when it has the paper; `--drop-unverified-scholar` drops the rest),
+  preprint duplicates of
   published papers are removed, invalid URLs and "…" venues are cleared, and
   empty Number of Contributors is filled.
 - **Roles**: being last in a long list with an alphabetical tail counts as
