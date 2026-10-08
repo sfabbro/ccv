@@ -94,11 +94,13 @@ def _cancel_timeout(old) -> None:
     signal.signal(signal.SIGALRM, old)
 
 
-def _gs_entrytype(_venue: str) -> str:
-    # ponytail: treat arXiv/preprints as journal articles so they land in
-    # Contributions; ceiling = NSERC may want these as "Submitted" — upgrade
-    # via --overrides status rules when needed.
-    return "article"
+def _gs_entrytype(venue: str) -> str:
+    """Type a Scholar snippet from its venue: workshops, meetings and
+    proceedings become conference publications (they used to be filed as
+    journal articles); arXiv stays an article and is marked Submitted."""
+    from ccv.bibtex_io import venue_entrytype
+
+    return venue_entrytype(venue)
 
 
 def _gs_bibtex_id(pub: dict[str, Any], title: str) -> str:
@@ -154,15 +156,21 @@ def _pub_to_bibtex(pub: dict[str, Any]) -> str | None:
     # Year is required for CCV/NSERC; skip yearless Scholar rows (ADS covers most).
     if not year:
         return None
+    from ccv.bibtex_io import is_truncated_text, normalize_arxiv
+
     entry_type = _gs_entrytype(venue)
     key = _gs_bibtex_id(pub, title)
     lines = [f"@{entry_type}{{{key},", f"  author = {{{author}}},",
              f"  title = {{{title}}},"]
-    if venue:
-        lines.append(f"  journal = {{{venue}}},")
+    if venue and not is_truncated_text(venue):  # Scholar cuts venues with "…"
+        field = "booktitle" if entry_type == "inproceedings" else "journal"
+        lines.append(f"  {field} = {{{venue}}},")
     lines.append(f"  year = {{{year}}},")
-    if pub.get("eprint_url"):
-        lines.append(f"  url = {{{pub['eprint_url']}}},")
+    url = str(pub.get("eprint_url") or pub.get("pub_url") or "")
+    if url.lower().startswith(("http://", "https://")):  # not javascript:void(0)
+        lines.append(f"  url = {{{url}}},")
+        if "arxiv.org" in url.lower() and normalize_arxiv(url.rsplit("/", 1)[-1]):
+            lines.append(f"  eprint = {{{normalize_arxiv(url.rsplit('/', 1)[-1])}}},")
     lines.append("}")
     return "\n".join(lines)
 
@@ -279,16 +287,22 @@ _HQP_SECTION_HINTS = ("Supervisory Activities", "Students and Postdoctoral Fello
 
 
 def load_hqp_names(base_tree: ET.ElementTree) -> list[str]:
-    """Collect supervised-student names from the base CCV (Student Name
-    fields under the Supervisory Activities / HQP section).
+    """Supervised-student names from the base CCV (kept for compatibility)."""
+    return [trainee.name for trainee in load_trainees(base_tree)]
 
-    Returns full names as stored in the CV, e.g. "Ashley Ferreira".  These
-    are used to apply the NSERC HQP asterisk rule to rebuilt publications.
+
+def load_trainees(base_tree: ET.ElementTree) -> list["Trainee"]:
+    """Collect supervised trainees (name + supervision start year) from the
+    base CCV's Supervisory Activities / HQP section.
+
+    The start year lets the HQP rule skip papers written before a trainee
+    joined the group.
     """
     import ccv.xmlutil as xmlutil
+    from ccv.hqpmatch import Trainee
 
     root = base_tree.getroot()
-    names: list[str] = []
+    trainees: dict[str, Trainee] = {}
     for section in xmlutil.iter_sections(root):
         label = (section.get("label") or "")
         if not any(hint.lower() in label.lower() for hint in _HQP_SECTION_HINTS):
@@ -297,144 +311,251 @@ def load_hqp_names(base_tree: ET.ElementTree) -> list[str]:
             name = xmlutil.value_text(xmlutil.field_by_label(record, "Student Name"))
             if not name.strip():
                 name = xmlutil.value_text(xmlutil.field_by_label(record, "Name"))
-            if name.strip():
-                names.append(name.strip())
-    # de-dup, preserve order
-    return list(dict.fromkeys(names))
-
-
-def _name_parts(raw: str) -> tuple[str, str]:
-    """Split a name into (surname, given) from either CCV convention:
-    'Ferreira, Ashley' or 'Ashley Ferreira'."""
-    raw = raw.strip()
-    if "," in raw:
-        last, _, given = raw.partition(",")
-        return last.strip(), given.strip()
-    tokens = raw.split()
-    if not tokens:
-        return "", ""
-    if len(tokens) == 1:
-        return tokens[0], ""
-    return tokens[-1], " ".join(tokens[:-1])
-
-
-def _initial(token: str) -> str:
-    token = token.strip()
-    if not token:
-        return ""
-    return token[0].upper()
+            name = name.strip()
+            if not name:
+                continue
+            start = xmlutil.value_text(
+                xmlutil.field_by_label(record, "Supervision Start Date")
+            )
+            m = re.match(r"(\d{4})", start.strip())
+            year = int(m.group(1)) if m else None
+            end = xmlutil.value_text(
+                xmlutil.field_by_label(record, "Supervision End Date")
+            )
+            m = re.match(r"(\d{4})", end.strip())
+            end_year = int(m.group(1)) if m else None
+            previous = trainees.get(name)
+            if previous is not None:
+                # Same person supervised at several levels: span all of them.
+                starts = [y for y in (previous.start_year, year) if y]
+                ends = [y for y in (previous.end_year, end_year) if y]
+                year = min(starts) if starts else None
+                end_year = max(ends) if ends and len(ends) == 2 else None
+            trainees[name] = Trainee(name, year, end_year)
+    return list(trainees.values())
 
 
 def _author_matches(author: str, hqp: str) -> bool:
-    """True if *author* names the same person as *hqp* (surname + given
-    initial), ignoring punctuation/case.  Author may carry '(*)' already."""
-    clean = re.sub(r"\*\(\)|\*|\s+", " ", author).strip()
-    a_last, a_given = _name_parts(clean)
-    h_last, h_given = _name_parts(hqp)
-    if not a_last or not h_last:
-        return False
-    if a_last.lower() != h_last.lower():
-        return False
-    if h_given and _initial(a_given) != _initial(h_given):
-        return False
-    return True
+    """True if *author* names the same person as *hqp*.
+
+    Compares full given names when both are known (so 'Murray, Calum' is not
+    'Christopher Murray'), otherwise the initial; accepts compound surnames.
+    """
+    from ccv.hqpmatch import Trainee, author_matches
+
+    return author_matches(author, Trainee(hqp))
 
 
 def _split_authors(text: str) -> list[str]:
     """Split a CCV author list into entries.
 
-    Handles both conventions: native CCV entries (",\n" separators with "&\n"
-    before the last) and web-import style (' and ' separators).
+    Handles native CCV entries (",\n" separators with "&\n" before the last),
+    web-import style (' and ' separators) and hand-typed ';' lists.
     """
+    if ";" in text and ",\n" not in text:
+        return [p.strip() for p in text.split(";") if p.strip()]
     return [p.strip() for p in re.split(r",\n|\band\b|&\n?", text) if p.strip()]
 
 
-def plan_hqp_marks(tree: ET.ElementTree, hqp_names: list[str]) -> list[dict[str, str]]:
-    """Report which authors would gain ' (*)' under the NSERC HQP rule.
+def _join_authors(original: str, parts: list[str]) -> str:
+    if len(parts) == 1:
+        return parts[0]
+    if ";" in original and ",\n" not in original:
+        return "; ".join(parts)
+    if " and " in original and ",\n" not in original:
+        return " and ".join(parts)  # keep web-import style
+    return ",\n".join(parts[:-1]) + ",\n&\n" + parts[-1]
 
-    Read-only: does not mutate *tree*.  Returns one dict per mark:
-    {label, title, author, hqp} where *author* is the author string that would
-    get ' (*)' appended and *hqp* is the supervised name it matched.
+
+def _record_year(record) -> int | None:
+    import ccv.xmlutil as xmlutil
+
+    text = xmlutil.value_text(xmlutil.field_by_label(record, "Year")).strip()
+    return int(text) if text[:4].isdigit() else None
+
+
+def _hqp_changes(record, trainees) -> tuple[list[str], list[tuple[str, str]], list[str]]:
+    """(new author list, [(author, trainee)] added, [author] unmarked) for one record."""
+    import ccv.xmlutil as xmlutil
+    from ccv.hqpmatch import find_trainee, is_marked, unmark
+
+    field = xmlutil.field_by_label(record, "Authors")
+    text = xmlutil.value_text(field)
+    if not text:
+        return [], [], []
+    year = _record_year(record)
+    out: list[str] = []
+    added: list[tuple[str, str]] = []
+    removed: list[str] = []
+    for part in _split_authors(text):
+        if part in ("...", "\u2026") or part.count(",") > 1:
+            # Ellipsis, or a hand-typed "A, B, C, D" run we cannot split safely.
+            out.append(part)
+            continue
+        if is_marked(part):
+            # Stale marks (e.g. Rhea, or a namesake of a former intern) are removed.
+            if find_trainee(unmark(part), trainees, year) is None:
+                out.append(unmark(part))
+                removed.append(part)
+            else:
+                out.append(part)
+            continue
+        hit = find_trainee(part, trainees, year)
+        if hit is not None:
+            out.append(f"{part} (*)")
+            added.append((part, hit.name))
+        else:
+            out.append(part)
+    return out, added, removed
+
+
+def plan_hqp_marks(tree: ET.ElementTree, hqp_names, records=None) -> list[dict[str, str]]:
+    """Report the '(*)' marks that would be added to and removed from *records*
+    (default: every managed publication).  Read-only.
+
+    *hqp_names* may be names or ccv.hqpmatch.Trainee objects.
     """
     import ccv.schema as schema
     import ccv.xmlutil as xmlutil
+    from ccv.hqpmatch import Trainee
 
+    trainees = [h if isinstance(h, Trainee) else Trainee(h) for h in hqp_names]
     marks: list[dict[str, str]] = []
-    if not hqp_names:
+    if not trainees:
         return marks
-    root = tree.getroot()
-    pubs = xmlutil.find_section(root, "Publications")
+    if records is None:
+        pubs = xmlutil.find_section(tree.getroot(), "Publications")
+        records = [] if pubs is None else xmlutil.child_sections(pubs)
+    for record in records:
+        label = record.get("label")
+        if label not in schema.MANAGED_PUBLICATION_LABELS:
+            continue
+        title = xmlutil.value_text(
+            xmlutil.field_by_label(record, _TITLE_FIELD_BY_LABEL.get(label, "Article Title"))
+        ).strip()
+        _out, added, removed = _hqp_changes(record, trainees)
+        for author, hqp in added:
+            marks.append({"label": label, "title": title, "author": author,
+                          "hqp": hqp, "action": "add"})
+        for author in removed:
+            marks.append({"label": label, "title": title, "author": author,
+                          "hqp": "", "action": "remove"})
+    return marks
+
+
+def mark_hqp_authors(tree: ET.ElementTree, hqp_names, records=None) -> int:
+    """Apply the NSERC HQP rule to *records* (default: all publications):
+    append ' (*)' to trainees and remove '(*)' from authors who match no
+    trainee.  Mutates the tree; returns the number of marks added.
+    """
+    import ccv.schema as schema
+    import ccv.xmlutil as xmlutil
+    from ccv.hqpmatch import Trainee
+
+    trainees = [h if isinstance(h, Trainee) else Trainee(h) for h in hqp_names]
+    if not trainees:
+        return 0
+    if records is None:
+        pubs = xmlutil.find_section(tree.getroot(), "Publications")
+        records = [] if pubs is None else xmlutil.child_sections(pubs)
+    marked = 0
+    for record in records:
+        if record.get("label") not in schema.MANAGED_PUBLICATION_LABELS:
+            continue
+        field = xmlutil.field_by_label(record, "Authors")
+        text = xmlutil.value_text(field)
+        out, added, removed = _hqp_changes(record, trainees)
+        if added or removed:
+            xmlutil.set_value_text(field, _join_authors(text, out))
+        marked += len(added)
+    return marked
+
+
+def fetch_ads_for_base_artefacts(
+    base_tree: ET.ElementTree, token: str, surnames: tuple[str, ...]
+) -> tuple[str, list[str]]:
+    """ADS BibTeX for base-CV rows that look like Google Scholar artefacts."""
+    import ccv.fetch_ads as fetch_ads
+    import ccv.schema as schema
+    import ccv.xmlutil as xmlutil
+    from ccv.publications import _preserved_problem, _record_is_scholar
+
+    pubs = xmlutil.find_section(base_tree.getroot(), "Publications")
     if pubs is None:
-        return marks
+        return "", []
+    titles: list[str] = []
     for record in xmlutil.child_sections(pubs):
         label = record.get("label")
         if label not in schema.MANAGED_PUBLICATION_LABELS:
             continue
-        title_field = _TITLE_FIELD_BY_LABEL.get(label, "Article Title")
-        title = xmlutil.value_text(xmlutil.field_by_label(record, title_field)).strip()
-        field = xmlutil.field_by_label(record, "Authors")
-        if field is None:
-            continue
-        text = xmlutil.value_text(field)
-        if not text:
-            continue
-        for part in _split_authors(text):
-            if "*" in part:  # already marked
-                continue
-            for hqp in hqp_names:
-                if _author_matches(part, hqp):
-                    marks.append({"label": label, "title": title,
-                                  "author": part, "hqp": hqp})
-                    break
-    return marks
+        if _preserved_problem(record, surnames) or _record_is_scholar(record):
+            title = xmlutil.value_text(xmlutil.field_by_label(record, _TITLE_FIELD_BY_LABEL[label]))
+            if title.strip():
+                titles.append(title.strip())
+    if not titles:
+        return "", []
+    found = fetch_ads.lookup_titles(token, titles, surnames)
+    docs = list({d["bibcode"]: d for d in found.values()}.values())
+    if not docs:
+        return "", [f"ADS lookup: none of {len(titles)} Scholar-artefact rows found"]
+    text = fetch_ads.annotate_bibtex(
+        fetch_ads.export_bibtex(token, [d["bibcode"] for d in docs]), docs
+    )
+    return text, [f"ADS lookup replaced Scholar-artefact row: {t[:70]}" for t in found]
 
 
-def mark_hqp_authors(tree: ET.ElementTree, hqp_names: list[str]) -> int:
-    """Append ' (*)' to publication authors that match a supervised HQP name.
+def enrich_scholar_from_ads(
+    scholar_text: str, ads_text: str, token: str, surnames: tuple[str, ...]
+) -> tuple[str, str, list[str]]:
+    """Replace Google Scholar snippets by their ADS records when ADS has them.
 
-    Mutates the tree in place and returns the number of author marks added.
+    Scholar search results carry abbreviated author lists and venues; the
+    ADS record of the same paper has the full metadata.  Returns
+    (extra ADS BibTeX, remaining Scholar BibTeX, report lines).
     """
-    import ccv.schema as schema
-    import ccv.xmlutil as xmlutil
+    import io
 
-    if not hqp_names:
-        return 0
-    root = tree.getroot()
-    pubs = xmlutil.find_section(root, "Publications")
-    if pubs is None:
-        return 0
-    marked = 0
-    for record in xmlutil.child_sections(pubs):
-        if record.get("label") not in schema.MANAGED_PUBLICATION_LABELS:
-            continue
-        field = xmlutil.field_by_label(record, "Authors")
-        if field is None:
-            continue
-        text = xmlutil.value_text(field)
-        if not text:
-            continue
-        parts = _split_authors(text)
-        out: list[str] = []
-        changed = False
-        for part in parts:
-            if "*" in part:  # already marked (e.g. "Name (*)" or "Name *")
-                out.append(part)
-                continue
-            if any(_author_matches(part, h) for h in hqp_names):
-                out.append(f"{part} (*)")
-                changed = True
-                marked += 1
-            else:
-                out.append(part)
-        if changed:
-            if len(out) == 1:
-                xmlutil.set_value_text(field, out[0])
-            elif " and " in text and ",\n" not in text:
-                # Preserve web-import style rather than normalizing it.
-                xmlutil.set_value_text(field, " and ".join(out))
-            else:
-                xmlutil.set_value_text(field, ",\n".join(out[:-1]) + ",\n&\n" + out[-1])
-    return marked
+    from bibtexparser import bparser
+    from bibtexparser.bwriter import BibTexWriter
+    from bibtexparser.bibdatabase import BibDatabase
+
+    import ccv.fetch_ads as fetch_ads
+    from ccv.bibtex_io import clean_title, entry_keys, titles_equivalent
+
+    def parse(text: str) -> list[dict[str, Any]]:
+        if not text.strip():
+            return []
+        parser = bparser.BibTexParser(common_strings=True)
+        parser.ignore_nonstandard_types = False
+        return list(parser.parse(text).get_entry_list())
+
+    ads_entries = parse(ads_text)
+    ads_keys = {k for e in ads_entries for k in entry_keys(e)}
+    ads_titles = [clean_title(e) for e in ads_entries]
+    scholar = parse(scholar_text)
+    missing = [
+        e for e in scholar
+        if not (set(entry_keys(e)) & ads_keys)
+        and not any(titles_equivalent(clean_title(e), t) for t in ads_titles)
+    ]
+    report: list[str] = []
+    if not missing:
+        return "", scholar_text, report
+    found = fetch_ads.lookup_titles(token, [clean_title(e) for e in missing], surnames)
+    replaced_titles = set(found)
+    docs = list({d["bibcode"]: d for d in found.values()}.values())
+    extra = ""
+    if docs:
+        extra = fetch_ads.annotate_bibtex(
+            fetch_ads.export_bibtex(token, [d["bibcode"] for d in docs]), docs
+        )
+    for title in sorted(replaced_titles):
+        report.append(f"Scholar -> ADS: {title[:70]}")
+    remaining = [e for e in scholar if clean_title(e) not in replaced_titles]
+    db = BibDatabase()
+    db.entries = remaining
+    writer = BibTexWriter()
+    return extra, writer.write(db) if remaining else "", report
 
 
 def strip_empty_templates(tree: ET.ElementTree) -> list[str]:
@@ -652,14 +773,45 @@ def run(args: argparse.Namespace) -> int:
             Path(tmp).unlink(missing_ok=True)
 
     # ---- Google Scholar ---------------------------------------------------
+    scholar_texts: list[str] = []
     if args.gs_bib:
-        sources.append(_read_bib_text(Path(args.gs_bib)))
+        scholar_texts.append(_read_bib_text(Path(args.gs_bib)))
         statuses.append(f"Google Scholar (file): {args.gs_bib}")
     if args.gs_author:
         blocks, message = fetch_google_scholar(args.gs_author, args.gs_max, args.gs_timeout)
         if blocks:
-            sources.append("\n\n".join(blocks))
+            scholar_texts.append("\n\n".join(blocks))
         statuses.append(message)
+    surnames = tuple(s.strip() for s in args.surname.split(",") if s.strip())
+    ads_token = args.ads_token or os.environ.get("ADS_API_TOKEN")
+    for scholar_text in scholar_texts:
+        if ads_token and not args.no_scholar_ads_lookup:
+            # Scholar snippets have truncated authors/venues: swap in ADS records.
+            try:
+                extra, scholar_text, report = enrich_scholar_from_ads(
+                    scholar_text, "\n\n".join(sources), ads_token, surnames
+                )
+            except Exception as exc:  # noqa: BLE001 - enrichment is best-effort
+                extra, report = "", [f"Scholar -> ADS lookup failed: {exc}"]
+            if extra:
+                sources.append(extra)
+            statuses.extend(report)
+        if scholar_text.strip():
+            sources.append(scholar_text)
+
+    if ads_token and args.preserve_extra and not args.no_scholar_ads_lookup:
+        # Rows that earlier Scholar imports left on the CV (truncated authors or
+        # venue) are replaced by their ADS records when ADS has them; otherwise
+        # the build drops or repairs them.
+        try:
+            extra, report = fetch_ads_for_base_artefacts(
+                xmlutil.load_ccv(base), ads_token, surnames
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort
+            extra, report = "", [f"ADS lookup for Scholar artefacts failed: {exc}"]
+        if extra:
+            sources.append(extra)
+        statuses.extend(report)
 
     if args.bib:
         sources.append(_read_bib_text(Path(args.bib)))
@@ -679,7 +831,6 @@ def run(args: argparse.Namespace) -> int:
     tree = xmlutil.load_ccv(base)
     injected = ensure_publication_templates(tree)
 
-    surnames = tuple(s.strip() for s in args.surname.split(",") if s.strip())
     entries = bibtex_io.load_bibtex(merged)
     skipped: list[tuple[str, str]] = []
 
@@ -691,6 +842,15 @@ def run(args: argparse.Namespace) -> int:
     if since_cutoff is None and args.last_years:
         since_cutoff = builder.since_from_years(args.last_years)
 
+    # NSERC HQP asterisk rule: supervised students/postdocs (with start years).
+    from ccv.hqpmatch import trainees_from_names
+
+    trainees = []
+    if args.hqp_names:
+        trainees = trainees_from_names(args.hqp_names.split(","))
+    elif args.hqp_from_base:
+        trainees = load_trainees(xmlutil.load_ccv(base))
+
     result = publications.replace_publications(
         tree,
         entries,
@@ -701,37 +861,44 @@ def run(args: argparse.Namespace) -> int:
         preserve_extra=args.preserve_extra,
         fill_percentage=not args.no_percentage,
         on_skip=on_skip if (args.verbose or args.preserve_extra) else None,
+        trainees=trainees,
+        keep_unverified_scholar=args.keep_unverified_scholar,
     )
-
-    # NSERC HQP asterisk rule: mark supervised students/postdocs in author lists.
-    hqp_names: list[str] = []
-    if args.hqp_names:
-        hqp_names = [n.strip() for n in args.hqp_names.split(",") if n.strip()]
-    elif args.hqp_from_base:
-        hqp_names = load_hqp_names(xmlutil.load_ccv(base))
+    built_marks = result["hqp_marks"]
+    kept_records = result["kept_records"]
 
     if args.hqp_dry_run:
         # Preview only: report exactly which authors would be marked, then stop
         # before writing the output file.
-        if not hqp_names:
+        if not trainees:
             print("HQP dry run: no supervised names loaded (use --hqp-names or "
                   "--hqp-from-base); nothing would be marked")
         else:
-            marks = plan_hqp_marks(tree, hqp_names)
-            print(f"HQP dry run: {len(marks)} author mark(s) would be added "
-                  f"(matching {len(hqp_names)} supervised name(s)); output NOT written")
-            for m in marks:
-                print(f"  [{m['label']}] {m['author']} (*)  -- matches supervised "
-                      f"name {m['hqp']!r}")
+            kept_marks = plan_hqp_marks(tree, trainees, records=kept_records)
+            adds = [m for m in kept_marks if m["action"] == "add"]
+            removes = [m for m in kept_marks if m["action"] == "remove"]
+            print(f"HQP dry run: {len(built_marks) + len(adds)} author mark(s) would be "
+                  f"added and {len(removes)} stale mark(s) removed (matching "
+                  f"{len(trainees)} supervised name(s)); output NOT written")
+            for m in built_marks + adds:
+                print(f"  + {m['author']} (*)  -- matches supervised name {m['hqp']!r}")
+                print(f"      in: {m['title'] or '(untitled)'}")
+            for m in removes:
+                print(f"  - {m['author']}  -- matches no supervised name; '(*)' removed")
                 print(f"      in: {m['title'] or '(untitled)'}")
         print(f"Note: merged BibTeX still written to {merged}; CCV output, "
-              "marking, and --validate/--summarize are skipped in dry-run mode")
+              "and --validate/--summarize are skipped in dry-run mode")
         return 0
 
-    if hqp_names:
-        marked = mark_hqp_authors(tree, hqp_names)
+    if trainees:
+        # Rebuilt records were marked from full BibTeX names; fix kept rows.
+        stale = [m for m in plan_hqp_marks(tree, trainees, records=kept_records)
+                 if m["action"] == "remove"]
+        marked = len(built_marks) + mark_hqp_authors(tree, trainees, records=kept_records)
         if marked:
             print(f"HQP asterisks added: {marked} author mark(s)")
+        for m in stale:
+            print(f"HQP stale mark removed: {m['author']} in {m['title'][:60]}")
 
     stripped = strip_empty_templates(tree)
     if stripped:
@@ -755,6 +922,12 @@ def run(args: argparse.Namespace) -> int:
           f"removed {len(result['removed'])}")
     if result["duplicates"]:
         print(f"Duplicates dropped: {len(result['duplicates'])}")
+    for title, reason in result.get("dropped_preserved", []):
+        print(f"Dropped from CV: {title[:70]} ({reason})")
+    if result.get("scholar_dropped"):
+        print(f"Scholar entries dropped (owner not in truncated author list): "
+              f"{len(result['scholar_dropped'])} (use -v for details, "
+              "--keep-unverified-scholar to keep)")
     if skipped:
         print(f"Skipped: {len(skipped)} entry/entries")
         if args.verbose:
@@ -772,7 +945,7 @@ def run(args: argparse.Namespace) -> int:
                     continue
                 print(f"  {summary[key]:4d}  {key}")
         if args.validate:
-            issues = validate.validate_publications(tree)
+            issues = validate.validate_publications(tree, surnames)
             if issues:
                 print(f"Validation: {len(issues)} issue(s) found:")
                 for issue in issues[: args.validate_max]:
@@ -854,6 +1027,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Scholar author name to scrape (best-effort, subject to throttling)")
     gs.add_argument("--gs-max", type=int, default=200, help="Max publications to fetch from Scholar")
     gs.add_argument("--gs-timeout", type=int, default=45, help="Seconds before giving up on Scholar")
+    gs.add_argument("--no-scholar-ads-lookup", action="store_true",
+                    help="Do not replace Scholar-only papers by their ADS records "
+                    "(looked up by title; needs an ADS token)")
+    gs.add_argument("--keep-unverified-scholar", action="store_true",
+                    help="Keep Scholar snippets whose (truncated) author list "
+                    "lacks your surname (default: drop them)")
 
     parser.add_argument("--bib", type=Path, default=None, help="Any extra local .bib file to include")
     parser.add_argument("--validate", action="store_true", help="Validate the output Publications section")

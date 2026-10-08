@@ -19,6 +19,10 @@ wrapper that adds:
    `build` works, then strips leftover empty templates from the output.
 4. **NSERC helpers** — six-year window, HQP `(*)` marking, and auto-fill of
    empty Contribution Role / Percentage on preserved base records.
+5. **CV hygiene** — keeps you and your trainees visible in long author lists,
+   marks preprints and meeting abstracts as non-refereed, replaces Google
+   Scholar snippets by their ADS records, and drops or repairs rows that
+   earlier Scholar imports left behind (see *What the build cleans up*).
 
 ## Install
 
@@ -102,11 +106,22 @@ Without pixi, call `ccv-update` / `ccv` from the venv (or
 Yearless Scholar snippets are skipped (CCV/NSERC need a Year). Prefer ADS for
 authoritative metadata; Scholar mainly fills gaps ADS missed.
 
+Scholar search results abbreviate author lists and venues. With an ADS token,
+every Scholar-only paper is looked up in ADS by title (requiring your
+surname) and replaced by the ADS record. Scholar snippets that still lack
+your surname are dropped (`--keep-unverified-scholar` keeps them), and a
+Scholar snippet never replaces a record already on the CV.
+
+| Flag | Meaning |
+|---|---|
+| `--no-scholar-ads-lookup` | skip the ADS title look-up for Scholar-only papers and Scholar-artefact rows |
+| `--keep-unverified-scholar` | keep Scholar snippets whose truncated author list lacks your surname |
+
 ### Build options
 
 - `--since YYYY[-MM]` — only include entries on/after the cutoff
-- `--last-years N` — keep only the last N years; NSERC validates Contributions
-  back to Jan 1 six years prior, so use `--last-years 6` for Discovery
+- `--last-years N` — keep entries from Jan 1 of the year N years ago (Jan 1 2020
+  for a 2026 application with N = 6); use `--last-years 6` for Discovery
 - `--surname` — your surname(s); used to mark first/last authorship (default `Fabbro`)
 - `--no-name-check` — allow a family-name mismatch (default: **abort**)
 - `--preserve-extra` — keep base-CV publications absent from the BibTeX
@@ -133,8 +148,14 @@ asterisk in publication author lists (the "HQP rule"). The CCV convention is
   writing the output file. Combine with either `--hqp-from-base` or
   `--hqp-names`.
 
-Matching is conservative: surname + given-name initial, case-insensitive.
-Authors already carrying a `*` are never double-marked.
+Matching uses the full BibTeX names before they are shortened to initials:
+full given names must agree when both are known ("Murray, Calum" is not
+"Christopher Murray"), compound surnames are supported, and a paper is only
+marked from the year before supervision started to four years after it ended
+(dates from the base CCV). With `--hqp-from-base`, `(*)` marks on preserved
+rows that match no trainee (including your own name) are removed; the dry run
+lists both additions and removals. Authors already carrying a `*` are never
+double-marked.
 
 ### Name-mismatch safeguard
 
@@ -167,6 +188,42 @@ pixi run ccv-update \
 - `--validate-max N` — limit the number of issues printed (default 25)
 - `--strict` — exit non-zero when `--validate` finds issues
 - `--summarize` — print section counts + Discovery-oriented metrics
+
+### What the build cleans up
+
+- **Long author lists** keep the first 10 authors, you, every trainee and the
+  last author, with `...` for each gap (previously the first 19 only, which
+  hid you on large collaboration papers). Number of Contributors stays exact.
+- **Rebuilt records start blank**: fields the BibTeX does not set are cleared
+  instead of inheriting the template record's values (rebuilt conference
+  papers used to inherit one conference's date, city and country).
+  Conference Date comes from the BibTeX year/month when present.
+- **Refereed status**: ADS's own refereed flag and doctype are fetched with
+  every search. arXiv-only records become *Submitted*, non-refereed; meeting
+  abstracts filed as articles (JASA A-pages, AAS abstracts) become
+  conference abstracts.
+- **Duplicates across sections**: a paper is matched by DOI, arXiv id or title
+  against journal *and* conference rows; an arXiv preprint never replaces a
+  published version.
+- **Preserved rows** (`--preserve-extra`): Scholar artefacts without your
+  name are dropped (reported as "Dropped from CV"), preprint duplicates of
+  published papers are removed, invalid URLs and "…" venues are cleared, and
+  empty Number of Contributors is filled.
+- **Roles**: being last in a long list with an alphabetical tail counts as
+  Co-Author, not Last Author.
+- **LaTeX**: `\raisebox`, `\textasciitilde`, formatting commands and ADS's
+  U+2500 dashes are handled (titles like "z∼0.5" no longer turn into
+  "zåisebox...").
+- `--validate` also reports records that do not list you, truncated venues,
+  invalid URLs and preprints marked refereed or published.
+
+## Tests
+
+```bash
+pip install -e '.[dev]'
+python -m pytest
+python check_gs_authors.py
+```
 
 ## Import / verify on ccv-cvc.ca
 

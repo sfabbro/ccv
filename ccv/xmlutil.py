@@ -110,6 +110,18 @@ def set_value_text(field: ET.Element, text: str | None) -> None:
             ET.SubElement(bilingual, child_tag(bilingual, "french"))
 
 
+def set_typed_value(field: ET.Element, text: str, value_type: str, fmt: str | None = None) -> None:
+    """Set a typed <value> (e.g. YearMonth 'yyyy/MM'), replacing any other value."""
+    for child in list(field):
+        if local_name(child.tag) in ("value", "lov"):
+            field.remove(child)
+    value = ET.SubElement(field, child_tag(field, "value"))
+    if fmt:
+        value.set("format", fmt)
+    value.set("type", value_type)
+    value.text = text
+
+
 def set_lov(field: ET.Element, label: str, lov_id: str) -> None:
     """Set a list-of-values field. Removes any stray <value> child first —
     LOV fields must not carry both (injected templates used to create that)."""
@@ -129,6 +141,37 @@ def clear_lov(field: ET.Element | None) -> None:
         return
     for child in list(field):
         if local_name(child.tag) == "lov":
+            field.remove(child)
+
+
+# Value types an empty element is valid for; dates/years are removed instead.
+_EMPTYABLE_VALUE_TYPES = {"String", "Bilingual", "Number", ""}
+
+
+def blank_field(field: ET.Element | None) -> None:
+    """Reset a field copied from a template record to "no value".
+
+    LOV children are removed, text values emptied (bilingual english/french
+    too) and typed date values (Year, YearMonth, Date) dropped, matching how
+    CCV exports write empty fields.
+    """
+    if field is None:
+        return
+    for child in list(field):
+        name = local_name(child.tag)
+        if name == "lov":
+            field.remove(child)
+        elif name == "value":
+            if (child.get("type") or "") in _EMPTYABLE_VALUE_TYPES:
+                child.text = ""
+                for sub in list(child):
+                    child.remove(sub)
+            else:
+                field.remove(child)
+        elif name == "bilingual":
+            for sub in child:
+                sub.text = ""
+        elif name == "refTable":
             field.remove(child)
 
 

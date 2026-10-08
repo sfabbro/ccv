@@ -126,25 +126,82 @@ def fetch_bibcodes(
     q = _build_query(
         authors=authors, orcid=orcid, bibcodes=bibcodes, query=query
     )
+    docs = fetch_docs(token, q, max_rows=max_rows, since_year=since_year)
+    return [doc["bibcode"] for doc in docs]
+
+
+def fetch_docs(
+    token: str, q: str, *, max_rows: int = 1000, since_year: int | None = None
+) -> list[dict[str, Any]]:
+    """Search ADS and return docs with bibcode, year, property and doctype."""
     params = urllib.parse.urlencode(
-        {"q": q, "fl": "bibcode,year", "rows": max_rows, "sort": "date desc"}
+        {"q": q, "fl": "bibcode,year,property,doctype,title", "rows": max_rows,
+         "sort": "date desc"}
     )
     result = _request(f"{SEARCH_URL}?{params}", token=token, payload=None)
     docs = (result.get("response") or {}).get("docs") or []
-    bibcodes_out = []
+    out: list[dict[str, Any]] = []
     for doc in docs:
-        bibcode = doc.get("bibcode")
-        if not bibcode:
+        if not doc.get("bibcode"):
             continue
         if since_year:
-            year = doc.get("year")
             try:
-                if int(year) < since_year:
+                if int(doc.get("year")) < since_year:
                     continue
             except (TypeError, ValueError):
                 pass
-        bibcodes_out.append(bibcode)
-    return bibcodes_out
+        out.append(doc)
+    return out
+
+
+def annotate_bibtex(bibtex: str, docs: list[dict[str, Any]]) -> str:
+    """Add ADS metadata the BibTeX export lacks: refereed flag and doctype.
+
+    Inserts ``adsrefereed = {yes|no}`` and ``adsdoctype = {...}`` right after
+    each ``@TYPE{bibcode,`` line so the CCV builder can mark preprints and
+    meeting abstracts as non-refereed.
+    """
+    meta = {doc["bibcode"]: doc for doc in docs}
+
+    def add(match: re.Match[str]) -> str:
+        doc = meta.get(match.group(2))
+        if not doc:
+            return match.group(0)
+        props = {str(p).upper() for p in doc.get("property") or []}
+        refereed = "yes" if "REFEREED" in props else "no"
+        doctype = str(doc.get("doctype") or "")
+        return (f"{match.group(0)}\n      adsrefereed = {{{refereed}}},"
+                f"\n      adsdoctype = {{{doctype}}},")
+
+    return re.sub(r"(@\w+\{)([^,\s]+),", add, bibtex)
+
+
+def lookup_titles(
+    token: str, titles: list[str], surnames: tuple[str, ...]
+) -> dict[str, dict[str, Any]]:
+    """Find ADS records for titles (e.g. Scholar-only papers) by the CV owner.
+
+    Returns {title: doc}.  Each query requires the owner's surname so only
+    records that actually list the owner come back.
+    """
+    found: dict[str, dict[str, Any]] = {}
+    author_q = " OR ".join(f'author:"{s}"' for s in surnames if s)
+    for title in titles:
+        words = re.sub(r"[\"()\[\]{}:^~*?\\/]", " ", title).split()
+        if len(words) < 3:
+            continue
+        q = f'title:"{" ".join(words)}"'
+        if author_q:
+            q += f" ({author_q})"
+        try:
+            docs = fetch_docs(token, q, max_rows=5)
+        except AdsError:
+            continue
+        # Prefer the refereed version when both the preprint and the paper exist.
+        docs.sort(key=lambda d: "REFEREED" not in {str(p).upper() for p in d.get("property") or []})
+        if docs:
+            found[title] = docs[0]
+    return found
 
 
 def export_bibtex(token: str, bibcodes: list[str]) -> str:
@@ -177,15 +234,9 @@ def fetch_bibtex_file(
             "no ADS API token: set ADS_API_TOKEN or pass --token "
             "(ADS > Settings > API Token)"
         )
-    bibcodes_found = fetch_bibcodes(
-        token,
-        authors=authors,
-        orcid=orcid,
-        bibcodes=bibcodes,
-        query=query,
-        max_rows=max_rows,
-        since_year=since_year,
-    )
-    bibtex = export_bibtex(token, bibcodes_found)
+    q = _build_query(authors=authors, orcid=orcid, bibcodes=bibcodes, query=query)
+    docs = fetch_docs(token, q, max_rows=max_rows, since_year=since_year)
+    bibcodes_found = [doc["bibcode"] for doc in docs]
+    bibtex = annotate_bibtex(export_bibtex(token, bibcodes_found), docs)
     Path(out_path).write_text(bibtex, encoding="utf-8")
     return {"bibcodes": len(bibcodes_found), "bytes": len(bibtex), "out": str(out_path)}

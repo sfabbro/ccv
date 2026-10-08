@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from bibtexparser import bparser
 
@@ -76,17 +76,52 @@ def format_author_name(raw: str) -> str:
     return f"{last}, {' '.join(initials)}" if initials else last
 
 
-def format_authors_for_ccv(entry: dict[str, Any], etal_after: int = 20) -> str:
-    authors = [format_author_name(a) for a in parse_author_list(entry.get("author", ""))]
-    authors = [a for a in authors if a]
-    if not authors:
+def format_authors_for_ccv(
+    entry: dict[str, Any],
+    etal_after: int = 20,
+    *,
+    keep: Callable[[str], bool] | None = None,
+    mark: Callable[[str], bool] | None = None,
+    head: int = 10,
+) -> str:
+    """Format the author list for the CCV Authors field.
+
+    Long lists are shortened to the first *head* authors, every author for
+    which *keep* is true (the CV owner and supervised trainees), and the
+    last author, with "..." marking each gap.  The old behaviour kept only
+    the first 19 names, which hid the CV owner (and any trainee) on large
+    collaboration papers.  *mark* appends " (*)" (NSERC HQP rule) using the
+    full BibTeX name, before given names are reduced to initials.
+    """
+    raw_authors = parse_author_list(entry.get("author", ""))
+    items: list[tuple[str, str]] = []
+    for raw in raw_authors:
+        formatted = format_author_name(raw)
+        if not formatted:
+            continue
+        if mark is not None and mark(raw):
+            formatted += " (*)"
+        items.append((raw, formatted))
+    if not items:
         return ""
-    if len(authors) == 1:
-        return authors[0]
-    if len(authors) > etal_after:
-        head = authors[: etal_after - 1]
-        return ",\n".join(head) + f",\n...\n{authors[-1]}"
-    return ",\n".join(authors[:-1]) + f",\n&\n{authors[-1]}"
+    if len(items) == 1:
+        return items[0][1]
+    if len(items) > etal_after:
+        wanted = set(range(min(head, len(items))))
+        wanted.add(len(items) - 1)
+        for index, (raw, formatted) in enumerate(items):
+            if (keep is not None and keep(raw)) or formatted.endswith("(*)"):
+                wanted.add(index)
+        tokens: list[str] = []
+        previous = -1
+        for index in sorted(wanted):
+            if index != previous + 1:
+                tokens.append("...")
+            tokens.append(items[index][1])
+            previous = index
+    else:
+        tokens = [formatted for _raw, formatted in items]
+    return ",\n".join(tokens[:-1]) + f",\n&\n{tokens[-1]}"
 
 
 def contributor_count(entry: dict[str, Any]) -> int:
@@ -115,14 +150,37 @@ def entry_has_surname(entry: dict[str, Any], surnames: tuple[str, ...]) -> bool:
     return any(is_author(author, surnames) for author in parse_author_list(entry.get("author") or ""))
 
 
+def _ascii_lower(text: str) -> str:
+    text = unicodedata.normalize("NFKD", strip_latex(text))
+    return "".join(c for c in text if not unicodedata.combining(c)).lower().strip()
+
+
+def alphabetical_tail(surnames: list[str], min_tail: int = 5) -> bool:
+    """True when the last *min_tail* surnames are in alphabetical order.
+
+    Large collaborations often list a core team, then everyone else
+    alphabetically; being last in such a list is not "Last Author".
+    """
+    if len(surnames) < min_tail:
+        return False
+    tail = [_ascii_lower(s) for s in surnames[-min_tail:]]
+    return all(a <= b for a, b in zip(tail, tail[1:]))
+
+
 def author_position(entry: dict[str, Any], surnames: tuple[str, ...]) -> int | None:
-    """Return 0 if the user is first author, -1 if last author, else None."""
+    """Return 0 if the user is first author, -1 if last author, else None.
+
+    Last place in a long list (> 10 authors) with an alphabetical tail is
+    treated as co-authorship.
+    """
     authors = parse_author_list(entry.get("author", ""))
     if not authors:
         return None
     if is_author(authors[0], surnames):
         return 0
     if len(authors) > 1 and is_author(authors[-1], surnames):
+        if len(authors) > 10 and alphabetical_tail([parse_name(a)[0] for a in authors]):
+            return None
         return -1
     return None
 
@@ -248,6 +306,9 @@ def entry_keys(entry: dict[str, Any]) -> list[str]:
     title = normalize_title_key(clean_title(entry))
     if title:
         keys.append(f"title:{title}")
+    arxiv = arxiv_id(entry)
+    if arxiv:
+        keys.append(f"arxiv:{arxiv}")
     if not keys:
         ident = str(entry.get("ID") or "").strip()
         if ident:
@@ -278,3 +339,109 @@ def dedupe_entries(
         accepted_titles.append(title)
         unique.append(entry)
     return unique, skipped
+
+
+# ---------------------------------------------------------------------------
+# Record classification helpers (arXiv ids, preprints, abstracts, venues).
+# ---------------------------------------------------------------------------
+
+_ARXIV_NEW_RE = re.compile(r"(\d{4}\.\d{4,5})(?:v\d+)?", re.I)
+_ARXIV_OLD_RE = re.compile(r"([a-z\-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?", re.I)
+
+
+def normalize_arxiv(text: str | None) -> str:
+    """Return a bare arXiv identifier ('2507.12345', 'astro-ph/0510447') or ''."""
+    if not text:
+        return ""
+    text = str(text).strip()
+    m = _ARXIV_NEW_RE.search(text)
+    if m:
+        return m.group(1).lower()
+    m = _ARXIV_OLD_RE.search(text)
+    if m:
+        return m.group(1).lower()
+    return ""
+
+
+def arxiv_id(entry: dict[str, Any]) -> str:
+    """arXiv id from eprint, an arXiv DOI (10.48550/arXiv.X) or an arxiv.org URL."""
+    eprint = str(entry.get("eprint") or "")
+    prefix = str(entry.get("archiveprefix") or "").lower()
+    if eprint and (prefix in ("", "arxiv")):
+        found = normalize_arxiv(eprint)
+        if found:
+            return found
+    doi = str(entry.get("doi") or "")
+    if "48550/arxiv." in doi.lower():
+        return normalize_arxiv(doi.split("arXiv.", 1)[-1] if "arXiv." in doi else doi)
+    for key in ("url", "adsurl", "eprint_url"):
+        url = str(entry.get(key) or "")
+        if "arxiv.org" in url.lower():
+            found = normalize_arxiv(url.rsplit("/", 1)[-1])
+            if found:
+                return found
+    return ""
+
+
+_PREPRINT_VENUE_RE = re.compile(r"arxiv|e-?prints?\b|preprint|biorxiv|ssrn", re.I)
+_ABSTRACT_VENUE_RE = re.compile(
+    r"meeting abstracts?|abstracts? of|abstract book|\babstracts\b|"
+    r"AAS/Division|EPSC|Lunar and Planetary Science Conference", re.I
+)
+_CONFERENCE_VENUE_RE = re.compile(
+    r"conference|proceedings|proc\.|symposium|workshop|meeting|congress|"
+    r"\bspie\b|neurips|nips|icml|iclr|cvpr|iccv|eccv|aistats|\baaai\b|"
+    r"astronomical data analysis software|\badass\b|\bASP Conf", re.I
+)
+
+
+def entry_venue(entry: dict[str, Any]) -> str:
+    return strip_latex(
+        expand_journal(entry.get("journal"))
+        or entry.get("booktitle")
+        or entry.get("series")
+        or ""
+    )
+
+
+def is_preprint(entry: dict[str, Any]) -> bool:
+    """True for arXiv-only (not yet published) records."""
+    if str(entry.get("adsdoctype") or "").lower() == "eprint":
+        return True
+    venue = entry_venue(entry)
+    if venue:
+        return bool(_PREPRINT_VENUE_RE.search(venue))
+    # No venue at all but an arXiv id: still a preprint.
+    return bool(arxiv_id(entry)) and not entry.get("doi")
+
+
+def is_meeting_abstract(entry: dict[str, Any]) -> bool:
+    """True for conference/meeting abstracts filed as journal articles.
+
+    ADS flags them with doctype 'abstract' (e.g. JASA 155, A276 or AAS
+    meeting abstracts); otherwise fall back to the venue name or the
+    'A'-prefixed page numbers journals use for abstract supplements.
+    """
+    if str(entry.get("adsdoctype") or "").lower() in ("abstract", "talk", "poster"):
+        return True
+    venue = entry_venue(entry)
+    if venue and _ABSTRACT_VENUE_RE.search(venue):
+        return True
+    pages = str(entry.get("pages") or "").strip()
+    return bool(re.fullmatch(r"A\d+(?:-A?\d+)?", pages)) and "acoust" in venue.lower()
+
+
+def venue_entrytype(venue: str) -> str:
+    """Guess the BibTeX type for a bare venue string (Google Scholar snippets)."""
+    if not venue:
+        return "article"
+    if _PREPRINT_VENUE_RE.search(venue):
+        return "article"
+    if _ABSTRACT_VENUE_RE.search(venue) or _CONFERENCE_VENUE_RE.search(venue):
+        return "inproceedings"
+    return "article"
+
+
+def is_truncated_text(text: str | None) -> bool:
+    """Google Scholar shortens long venues/authors with an ellipsis."""
+    return bool(text) and ("\u2026" in str(text) or str(text).rstrip().endswith("..."))

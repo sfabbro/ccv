@@ -25,13 +25,15 @@ def parse_since(value: str | None) -> tuple[int, int] | None:
 def since_from_years(last_years: int | None) -> tuple[int, int] | None:
     """Convert --last-years N into a (year, month) cutoff.
 
-    N = 6 covers the current year plus the previous five, the window NSERC
-    Discovery reviewers typically consider.
+    NSERC counts contributions back to Jan 1 of the year N years before the
+    current one (Jan 1 2020 for a 2026 application with N = 6), as the README
+    documents.  The old cutoff started a year later and silently dropped the
+    first year of the window.
     """
     if not last_years or last_years <= 0:
         return None
     current = datetime.now().year
-    return (current - last_years + 1, 1)
+    return (current - last_years, 1)
 
 
 def build_from_base(

@@ -12,6 +12,12 @@ from .schema import JOURNAL_MACROS
 
 # Order matters: longer / more specific replacements first.
 _LATEX_REPLACEMENTS = [
+    ("\\textasciitilde", "\u223c"),
+    ("\\sim", "\u223c"),
+    ("\\textless", "<"),
+    ("\\textgreater", ">"),
+    # ADS writes some dashes as U+2500 (box drawing), e.g. "Black Hole─Halo".
+    ("\u2500", "\u2013"),
     ("\\textendash", "\u2013"),
     ("\\textemdash", "\u2014"),
     ("{\\textemdash}", "\u2014"),
@@ -127,7 +133,20 @@ _LETTER_MACROS = {
 
 # {\'e}, {\"o}, {\c{c}}, {\H{o}}, ...  and  \'e, \'e (two forms)
 _ACCENT_BRACED_RE = re.compile(r"\{\\([`'\"^~=.uvHckr])(\{([^{}]*)\}|([^{}]))}")
-_ACCENT_PLAIN_RE = re.compile(r"\\([`'\"^~=.uvHckr])([A-Za-z])")
+# Symbol accents (\'e, \"o, \^a) may be followed directly by their letter.
+_ACCENT_PLAIN_RE = re.compile(r"\\([`'\"^~=.])\s*([A-Za-z])")
+# Letter accents (\v, \c, \r, ...) only count with a braced or space-separated
+# single letter: a bare "\r" followed by letters is another command
+# (\raisebox used to become "åisebox").
+_ACCENT_LETTER_RE = re.compile(
+    r"\\([uvHckr])(?:\{([A-Za-z])\}|\s+([A-Za-z])(?![A-Za-z]))"
+)
+# Layout / formatting commands whose arguments are dropped or unwrapped.
+_DROP_WITH_ARG_RE = re.compile(r"\\(?:raisebox|vspace|hspace|kern|label)\s*\{[^{}]*\}")
+_UNWRAP_RE = re.compile(
+    r"\\(?:textit|textbf|textrm|textsc|textsf|texttt|emph|mathrm|mathit|mathbf|"
+    r"mbox|text|it|bf|rm|em|sc)(?![A-Za-z])\s*"
+)
 # {\ss}, {\o}, \ss, \o, \AA ...
 _LETTER_BRACED_RE = re.compile(r"\{\\([A-Za-z]{1,2})\}")
 _LETTER_PLAIN_RE = re.compile(r"\\([A-Za-z]{2})(?![A-Za-z])")
@@ -143,6 +162,13 @@ def _replace_accent(match: re.Match[str]) -> str:
 def _replace_plain_accent(match: re.Match[str]) -> str:
     accent = match.group(1)
     letter = match.group(2)
+    table = _ACCENT_TABLES.get(accent, {})
+    return table.get(letter, letter)
+
+
+def _replace_letter_accent(match: re.Match[str]) -> str:
+    accent = match.group(1)
+    letter = match.group(2) or match.group(3) or ""
     table = _ACCENT_TABLES.get(accent, {})
     return table.get(letter, letter)
 
@@ -169,11 +195,14 @@ def strip_latex(text: str | None) -> str:
     out = text
     for macro, expanded in JOURNAL_MACROS.items():
         out = out.replace(macro, expanded)
+    out = _DROP_WITH_ARG_RE.sub("", out)
     for src, dst in _LATEX_REPLACEMENTS:
         out = out.replace(src, dst)
 
     out = _ACCENT_BRACED_RE.sub(_replace_accent, out)
     out = _ACCENT_PLAIN_RE.sub(_replace_plain_accent, out)
+    out = _ACCENT_LETTER_RE.sub(_replace_letter_accent, out)
+    out = _UNWRAP_RE.sub("", out)
     out = _LETTER_BRACED_RE.sub(_replace_letter, out)
     out = _LETTER_PLAIN_RE.sub(_replace_letter, out)
 
