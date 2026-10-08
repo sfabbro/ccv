@@ -369,3 +369,14 @@ def test_scholar_snippets_replaced_by_ads_records(monkeypatch):
     extra, remaining, report = enrich_scholar_from_ads(scholar, "", "token", ("Fabbro",))
     assert "2026arXiv260302400V" in extra and "adsdoctype = {eprint}" in extra
     assert remaining == "" and report
+
+
+def test_annotate_bibtex_is_idempotent():
+    from ccv.fetch_ads import annotate_bibtex
+
+    bib = "@ARTICLE{2022A&A...659A.140C,\n      author = {X},\n}\n"
+    docs = [{"bibcode": "2022A&A...659A.140C", "property": ["REFEREED"], "doctype": "article"}]
+    once = annotate_bibtex(bib, docs)
+    twice = annotate_bibtex(once, docs)
+    assert once == twice
+    assert once.count("adsrefereed = {yes}") == 1

@@ -37,7 +37,10 @@ import tempfile
 import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ccv.hqpmatch import Trainee
 
 # Repo root when running from a source checkout (parent of the ccv/ package).
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -292,11 +295,11 @@ def load_hqp_names(base_tree: ET.ElementTree) -> list[str]:
 
 
 def load_trainees(base_tree: ET.ElementTree) -> list["Trainee"]:
-    """Collect supervised trainees (name + supervision start year) from the
-    base CCV's Supervisory Activities / HQP section.
+    """Collect supervised trainees (name, supervision start and end years)
+    from the base CCV's Supervisory Activities / HQP section.
 
-    The start year lets the HQP rule skip papers written before a trainee
-    joined the group.
+    The years let the HQP rule skip papers by namesakes written long before
+    or after the supervision.
     """
     import ccv.xmlutil as xmlutil
     from ccv.hqpmatch import Trainee
@@ -371,7 +374,7 @@ def _record_year(record) -> int | None:
     import ccv.xmlutil as xmlutil
 
     text = xmlutil.value_text(xmlutil.field_by_label(record, "Year")).strip()
-    return int(text) if text[:4].isdigit() else None
+    return int(text[:4]) if text[:4].isdigit() else None
 
 
 def _hqp_changes(record, trainees) -> tuple[list[str], list[tuple[str, str]], list[str]]:
@@ -513,8 +516,6 @@ def enrich_scholar_from_ads(
     ADS record of the same paper has the full metadata.  Returns
     (extra ADS BibTeX, remaining Scholar BibTeX, report lines).
     """
-    import io
-
     from bibtexparser import bparser
     from bibtexparser.bwriter import BibTexWriter
     from bibtexparser.bibdatabase import BibDatabase

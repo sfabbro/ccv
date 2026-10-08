@@ -173,6 +173,8 @@ def annotate_bibtex(bibtex: str, docs: list[dict[str, Any]]) -> str:
         return (f"{match.group(0)}\n      adsrefereed = {{{refereed}}},"
                 f"\n      adsdoctype = {{{doctype}}},")
 
+    # Drop earlier annotations so re-annotating never duplicates fields.
+    bibtex = re.sub(r"\n\s*ads(?:refereed|doctype)\s*=\s*\{[^}]*\},", "", bibtex)
     return re.sub(r"(@\w+\{)([^,\s]+),", add, bibtex)
 
 
@@ -187,7 +189,7 @@ def lookup_titles(
     found: dict[str, dict[str, Any]] = {}
     author_q = " OR ".join(f'author:"{s}"' for s in surnames if s)
     for title in titles:
-        words = re.sub(r"[\"()\[\]{}:^~*?\\/]", " ", title).split()
+        words = re.sub(r"[\"()\[\]{}:^~*?\\/\u2026]|\.\.\.", " ", title).split()
         if len(words) < 3:
             continue
         q = f'title:"{" ".join(words)}"'
