@@ -144,6 +144,8 @@ CCV schema (<https://ccv-cvc.ca/schema/dataset-cv.xml>) and real exports with
   ccv_update.py ...` work without the console scripts.
 - NSERC's own guidance: [How to complete NSERC's version of the Canadian Common
   CV](https://nserc-crsng.canada.ca/en/funding/online-application-systems-and-tools/online-services/research-portal/instructions/how).
+  `scripts/fetch-nserc-instructions.sh` saves the current page locally. It is
+  not stored in this repo.
 
 ## License
 

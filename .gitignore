@@ -24,5 +24,6 @@ ADS_TOKEN*
 .cursor/
 .freebuff/
 
-# Third-party documents (link to the source instead of redistributing)
+# Third-party documents (fetch with scripts/fetch-nserc-instructions.sh)
 CCCV_NSERC_INSTRUCTIONS.pdf
+CCCV_NSERC_INSTRUCTIONS.html
