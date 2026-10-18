@@ -9,7 +9,7 @@ description = "Fetch ADS/Scholar publications and build Canadian Common CV XML"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Simon Fabbro" }]
+authors = [{ name = "Sébastien Fabbro" }]
 keywords = ["ccv", "canadian-common-cv", "ads", "bibtex", "nserc"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -69,7 +69,9 @@ python = "3.13.*"
 
 [tool.pixi.pypi-dependencies]
 ccv = { path = ".", editable = true }
+pytest = ">=8.0"
 
 [tool.pixi.tasks]
 ccv = "ccv"
 update = "ccv-update"
+test = "pytest -q"

@@ -11,13 +11,18 @@ from ccv import builder, schema, xmlutil
 from ccv.bibtex_io import (
     arxiv_id,
     author_position,
+    dedupe_entries,
     entry_keys,
     format_authors_for_ccv,
     is_author,
     is_meeting_abstract,
     is_preprint,
+    is_shortened_title,
+    normalize_title_key,
+    titles_equivalent,
     venue_entrytype,
 )
+from ccv.update import _gs_author_field
 from ccv.fetch_ads import annotate_bibtex
 from ccv.hqpmatch import Trainee, author_matches
 from ccv.publications import field_value_map, replace_publications
@@ -131,6 +136,7 @@ def test_conference_template_values_do_not_leak():
     rec = _records(pubs, "Conference Publications")[0]
     assert _val(rec, "City") == ""
     assert xmlutil.field_by_label(rec, "Conference Date").find("value") is None
+    assert _val(rec, "Conference Name") == "AAS/Division for Planetary Sciences Meeting"
 
 
 def test_conference_date_from_bibtex_month():
@@ -145,6 +151,7 @@ def test_conference_date_from_bibtex_month():
     }], author_surnames=("Fabbro",))
     rec = _records(pubs, "Conference Publications")[0]
     assert _val(rec, "Conference Date") == "2012/10"
+    assert xmlutil.lov_label(xmlutil.field_by_label(rec, "Conference Publication Type")) == "Paper"
 
 
 # 3. Preprints and abstracts are not refereed/published ----------------------
@@ -324,12 +331,21 @@ def test_latex_commands_not_read_as_accents():
     assert strip_latex("Black Hole─Halo") == "Black Hole–Halo"
     assert strip_latex(r"{\v{C}}ern{\'y} \v{s} \c c") == "Černý š ç"
     assert strip_latex(r"\textit{Gaia} DR3") == "Gaia DR3"
+    # Longest journal macro must win: "\apj" first used to yield
+    # "Astrophysical Journall" from a braced {\apjl}.
+    assert strip_latex(r"{\apjl}") == "Astrophysical Journal Letters"
+    assert strip_latex(r"\aapl") == "Astronomy and Astrophysics Letters"
+    assert strip_latex(r"Pe{\~n}a") == "Peña"
+    assert strip_latex(r"J.~J.~Smith") == "J. J. Smith"
 
 
 # 8. Six-year window ----------------------------------------------------------
 
 def test_last_years_starts_six_years_back():
     assert builder.since_from_years(6) == (datetime.datetime.now().year - 6, 1)
+    assert builder.parse_since("2020-03") == (2020, 3)
+    with pytest.raises(ValueError):
+        builder.parse_since("spring")
 
 
 # Extras: alphabetical tails and validation --------------------------------------
@@ -392,3 +408,100 @@ def test_unverified_scholar_rows_kept_by_default():
     titles = [_val(r, "Article Title") for r in _records(pubs, "Journal Articles")]
     assert "The primordial nature of the C-19 stellar stream" in titles
     assert not result["dropped_preserved"]
+
+
+def test_summarize_counts_each_paper_once():
+    tree, pubs = _tree()
+    _record(pubs, "Journal Articles", "One")
+    flat = xmlutil.summarize(tree)
+    assert flat["Publications / Journal Articles"] == 1
+
+    root = ET.Element(f"{{{NS}}}generic-cv")
+    contributions = ET.SubElement(root, "section")
+    contributions.set("label", "Contributions")
+    nested_pubs = ET.SubElement(contributions, "section")
+    nested_pubs.set("label", "Publications")
+    _record(nested_pubs, "Journal Articles", "Nested")
+    nested = xmlutil.summarize(ET.ElementTree(root))
+    assert nested["Publications / Journal Articles"] == 1
+    assert nested["Contributions / Publications"] == 1
+
+
+def test_non_numeric_year_is_skipped():
+    tree, pubs = _tree()
+    _templates(pubs)
+    result = replace_publications(tree, [{
+        "ID": "x", "ENTRYTYPE": "article", "title": "Nope",
+        "author": "A Other and S Fabbro", "year": "in press", "journal": "ApJ",
+    }], author_surnames=("Fabbro",))
+    assert result["publication_counts"]["Journal Articles"] == 0
+    assert not _records(pubs, "Journal Articles")
+
+
+def test_scholar_author_field_and_missing_year():
+    assert _gs_author_field(["S Fabbro", "K M Yi"]) == "S Fabbro and K M Yi"
+    assert _gs_author_field("A Smith, B Jones, ...") == "A Smith and B Jones"
+    assert _pub_to_bibtex({"bib": {"title": "No Year", "author": ["A"]}}) is None
+
+
+def test_new_lov_nodes_are_unprefixed():
+    field = ET.Element("field")
+    xmlutil.set_lov(field, "Co-Author", schema.LOV_IDS["Co-Author"])
+    blob = ET.tostring(field, encoding="unicode")
+    assert "<lov " in blob and "generic-cv:lov" not in blob
+
+
+def test_title_wording_and_scholar_shortening():
+    ads = strip_latex(r"Measurements of \ensuremath{\Omega} and \ensuremath{\Lambda} from 42")
+    assert normalize_title_key(ads) == normalize_title_key("Measurements of Ω and Λ from 42")
+    kept, skipped = dedupe_entries([
+        {"ID": "ads1", "ENTRYTYPE": "article", "title": ads, "doi": "10.1086/307221", "year": "1999"},
+        {"ID": "Scholar1", "ENTRYTYPE": "article", "title": "Measurements of Ω and Λ from 42", "year": "1999"},
+    ])
+    assert len(kept) == 1 and len(skipped) == 1
+    pairs = [
+        ("Dependence of Type Ia supernova luminosities on their local environment",
+         "The Dependence of Type Ia Supernova Luminosities on Their Local Environment"),
+        ("The Canada-France Imaging Survey: Reconstructing the Milky Way Star Formation History from Its White Dwarf Population",
+         "The Canada-France Imaging Survey: Reconstructing the Milky Way Star Formation History from its White Dwarf"),
+    ]
+    for left, right in pairs:
+        assert titles_equivalent(left, right), (left, right)
+    assert not titles_equivalent(
+        "CANFAR: the Canadian advanced network for astronomical research",
+        "The Canadian Advanced Network For Astronomical Research",
+    )
+    assert is_shortened_title(
+        "Detecting ringed seal vocalizations using deep learning",
+        "Detecting ringed seal vocalizations in multiple environments using deep learning",
+    )
+    assert not is_shortened_title(
+        "An application of deep learning in the analysis of stellar spectra",
+        "StarNet: An application of deep learning in the analysis of stellar spectra",
+    )
+
+
+def test_near_duplicate_base_title_is_replaced():
+    tree, pubs = _tree()
+    _templates(pubs)
+    _mk = "StarUnLink: identifying and mitigating signals from communication satellites in stellar spectral surveys"
+    _full = "StarUnLink: Identifying and mitigating signals from communications satellites in stellar spectral surveys"
+    _record(pubs, "Journal Articles", _full, year="2023")
+    _record(pubs, "Journal Articles", _mk, year="2023", extra={"DOI": "10.1093/mnras/stad1889"})
+    _record(pubs, "Journal Articles",
+            "Detecting ringed seal vocalizations in multiple environments using deep learning", year="2024")
+    replace_publications(tree, [
+        {"ID": "ads-star", "ENTRYTYPE": "article", "title": _mk,
+         "author": "S Fabbro and A Other", "year": "2023", "journal": "MNRAS",
+         "doi": "10.1093/mnras/stad1889"},
+        {"ID": "seal-short", "ENTRYTYPE": "article",
+         "title": "Detecting ringed seal vocalizations using deep learning",
+         "author": "K Zammit and W Halliday", "year": "2026", "journal": "JASA Express"},
+        {"ID": "seal-middle", "ENTRYTYPE": "article",
+         "title": "Detecting ringed seal vocalizations in multiple environments",
+         "author": "K Zammit and S Fabbro and W Halliday", "year": "2026", "journal": "JASA"},
+    ], author_surnames=("Fabbro",), since=(2023, 1), preserve_extra=True)
+    titles = [_val(r, "Article Title") for r in _records(pubs, "Journal Articles")]
+    assert sum("StarUnLink" in t for t in titles) == 1
+    assert not any(t.startswith("Detecting ringed seal vocalizations using deep") for t in titles)
+    assert "Detecting ringed seal vocalizations in multiple environments" in titles

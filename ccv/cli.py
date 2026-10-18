@@ -5,29 +5,39 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from . import __version__
 from . import xmlutil
 from .builder import build_from_base
+from .fetch_ads import AdsError, fetch_bibtex_file, split_ads_authors
+from .hqp import update_hqp
 from .validate import discovery_metrics, summarize_tree, validate_publications
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
     surnames = tuple(s.strip() for s in args.author_surname.split(",") if s.strip())
-    result = build_from_base(
-        args.base,
-        args.bib,
-        args.out,
-        author_surnames=surnames or ("Fabbro",),
-        since=args.since,
-        last_years=args.last_years,
-        assign_record_ids=args.assign_record_ids,
-        overrides=args.overrides,
-        preserve_extra=args.preserve_extra,
-        fill_percentage=not args.no_percentage,
-        verbose=args.verbose,
-    )
+    if not surnames:
+        print("error: --author-surname contains no names", file=sys.stderr)
+        return 2
+    try:
+        result = build_from_base(
+            args.base,
+            args.bib,
+            args.out,
+            author_surnames=surnames,
+            since=args.since,
+            last_years=args.last_years,
+            assign_record_ids=args.assign_record_ids,
+            overrides=args.overrides,
+            preserve_extra=args.preserve_extra,
+            fill_percentage=not args.no_percentage,
+            verbose=args.verbose,
+        )
+    except (ValueError, ET.ParseError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     counts = result["publication_counts"]
     total = sum(counts.values())
     print(f"Wrote {result['written']}")
@@ -90,8 +100,6 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 
 def _cmd_fetch(args: argparse.Namespace) -> int:
-    from .fetch_ads import AdsError, fetch_bibtex_file, split_ads_authors
-
     authors = split_ads_authors(args.author) if args.author else None
     if args.author and not authors:
         print(f"error: --author {args.author!r} contains no names", file=sys.stderr)
@@ -118,8 +126,6 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
 
 
 def _cmd_hqp(args: argparse.Namespace) -> int:
-    from .hqp import update_hqp
-
     tree = xmlutil.load_ccv(args.base)
     info = update_hqp(
         tree,
@@ -157,9 +163,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Only include entries on/after YYYY or YYYY-MM")
     build.add_argument("--last-years", type=int, default=None,
                        help="Include only the last N years (Discovery-style window)")
-    build.add_argument("--author-surname", default="Fabbro",
+    build.add_argument("--author-surname", required=True,
                        help="Comma-separated surnames used to detect first/last "
-                       "authorship (default: Fabbro)")
+                       "authorship")
     build.add_argument("--overrides", type=Path, default=None,
                        help="YAML file with invited/refereed/status/percentage rules")
     build.add_argument("--preserve-extra", action="store_true",
@@ -195,8 +201,8 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--token", default=None,
                        help="ADS API token (default: $ADS_API_TOKEN)")
     fetch.add_argument("--author", default=None,
-                       help="ADS author phrase(s), e.g. 'Fabbro, S'. Multiple "
-                       "surnames: 'Fabbro, Kavelaars' (initials stay glued to "
+                       help="ADS author phrase(s), e.g. 'Smith, J'. Multiple "
+                       "surnames: 'Smith, Jones' (initials stay glued to "
                        "their surname)")
     fetch.add_argument("--orcid", default=None, help="ORCID iD, e.g. 0000-0001-0000-0000")
     fetch.add_argument("--bibcodes", default=None,

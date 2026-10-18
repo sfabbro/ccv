@@ -44,8 +44,8 @@ def parse_name(raw: str) -> tuple[str, str]:
     """Parse one author into (last name, given names).
 
     Handles both BibTeX conventions:
-      "Kavelaars, J. J."   -> ("Kavelaars", "J. J.")
-      "J. J. Kavelaars"    -> ("Kavelaars", "J. J.")
+      "Smith, J. J."  -> ("Smith", "J. J.")
+      "J. J. Smith"   -> ("Smith", "J. J.")
     """
     raw = strip_latex(raw).strip()
     if not raw:
@@ -185,10 +185,6 @@ def author_position(entry: dict[str, Any], surnames: tuple[str, ...]) -> int | N
     return None
 
 
-def is_first_author(entry: dict[str, Any], surnames: tuple[str, ...]) -> bool:
-    return author_position(entry, surnames) == 0
-
-
 def clean_title(entry: dict[str, Any]) -> str:
     return strip_latex(entry.get("title", ""))
 
@@ -199,12 +195,6 @@ def journal_name(entry: dict[str, Any]) -> str:
 
 # Fold Greek letters / common LaTeX leftovers so ADS "Omega" matches Scholar "Ω".
 _TITLE_FOLDS = (
-    ("omega", "omega"),
-    ("lambda", "lambda"),
-    ("alpha", "alpha"),
-    ("beta", "beta"),
-    ("gamma", "gamma"),
-    ("delta", "delta"),
     ("μ", "mu"),
     ("Ω", "omega"),
     ("ω", "omega"),
@@ -285,12 +275,6 @@ def is_shortened_title(short: str, long: str, max_extra: int = 4) -> bool:
         if i < len(a) and word == a[i]:
             i += 1
     return i == len(a)
-
-
-def entry_key(entry: dict[str, Any]) -> str:
-    """Primary identity: DOI if present, else normalized title, else ID."""
-    keys = entry_keys(entry)
-    return keys[0] if keys else ""
 
 
 def entry_keys(entry: dict[str, Any]) -> list[str]:

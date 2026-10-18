@@ -211,7 +211,9 @@ def summarize(tree: ET.ElementTree) -> dict[str, int]:
             clabel = f"{label} / {child.get('label')}"
             counts[clabel] = counts.get(clabel, 0) + 1
     pubs = find_section(root, "Publications")
-    if pubs is not None:
+    # Papers under Contributions are one level deeper than the loop above.
+    # When Publications is itself a direct child, those papers are already counted.
+    if pubs is not None and pubs not in child_sections(root):
         for child in child_sections(pubs):
             key = f"Publications / {child.get('label')}"
             counts[key] = counts.get(key, 0) + 1

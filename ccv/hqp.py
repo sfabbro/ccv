@@ -22,7 +22,7 @@ students.yaml:
       - "Name": "Bob Smith"
         "Student Type": "Post-doctoral Student"
         "Supervisor Role": "Principal Supervisor"
-        "Institution": "NRC Herzberg"
+        "Institution": "Example University"
 """
 
 from __future__ import annotations

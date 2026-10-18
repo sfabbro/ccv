@@ -1,7 +1,7 @@
 """CCV field IDs, LOV codes, and BibTeX <-> CCV publication mappings.
 
-IDs are taken from official CCV XML exports (see CCV-10065383.xml) and cross-
-checked against the public CCV schema published by the Canadian Common CV:
+IDs are taken from official CCV XML exports and cross-checked against the
+public CCV schema published by the Canadian Common CV:
 
     https://ccv-cvc.ca/schema/dataset-cv.xml        (field -> lookupId)
     https://ccv-cvc.ca/schema/dataset-cv-lov.xml    (lookupId -> values)

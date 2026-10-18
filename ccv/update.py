@@ -21,8 +21,8 @@ Example:
     pixi run ccv-update \\
         --base      CCV-export.xml \\
         --out       CCV-updated.xml \\
-        --surname   Fabbro \\
-        --ads-token "$ADS_API_TOKEN" --ads-author "Fabbro, S" \\
+        --surname   Smith \\
+        --ads-token "$ADS_API_TOKEN" --ads-orcid 0000-0001-0000-0000 \\
         --last-years 6 --hqp-from-base --preserve-extra --validate
 """
 
@@ -31,49 +31,36 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import sys
 import signal
+import sys
 import tempfile
 import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from ccv.hqpmatch import Trainee
+from bibtexparser import bparser
+from bibtexparser.bibdatabase import BibDatabase
+from bibtexparser.bwriter import BibTexWriter
 
-# Repo root when running from a source checkout (parent of the ccv/ package).
-REPO_ROOT = Path(__file__).resolve().parent.parent
-
-
-def _import_ccv(repo: str | Path | None = None) -> Path:
-    """Ensure the `ccv` package is importable; return the repo/source root used."""
-    if repo:
-        root = Path(repo).resolve()
-        if str(root) not in sys.path:
-            sys.path.insert(0, str(root))
-    try:
-        import ccv  # noqa: F401
-        import ccv.bibtex_io  # noqa: F401
-        import ccv.fetch_ads  # noqa: F401
-        import ccv.publications  # noqa: F401
-        import ccv.schema  # noqa: F401
-        import ccv.validate  # noqa: F401
-        import ccv.xmlutil  # noqa: F401
-    except ImportError as exc:
-        raise SystemExit(
-            "error: ccv package is not importable — install with "
-            "`pixi install` or `pip install -e .` "
-            f"({exc})"
-        ) from exc
-    # Prefer an explicit --repo; otherwise the source tree next to this file
-    # (editable installs) or the installed package location.
-    if repo:
-        return Path(repo).resolve()
-    pkg_dir = Path(ccv.__file__).resolve().parent
-    if (pkg_dir.parent / "pyproject.toml").exists():
-        return pkg_dir.parent
-    return pkg_dir.parent
+import ccv.bibtex_io as bibtex_io
+import ccv.builder as builder
+import ccv.fetch_ads as fetch_ads
+import ccv.publications as publications
+import ccv.schema as schema
+import ccv.validate as validate
+import ccv.xmlutil as xmlutil
+from ccv.bibtex_io import (
+    clean_title,
+    entry_keys,
+    is_truncated_text,
+    normalize_arxiv,
+    titles_equivalent,
+    venue_entrytype,
+)
+from ccv.fetch_ads import split_ads_authors
+from ccv.hqpmatch import Trainee, find_trainee, is_marked, trainees_from_names, unmark
+from ccv.publications import _preserved_problem, _record_is_scholar
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +88,6 @@ def _gs_entrytype(venue: str) -> str:
     """Type a Scholar snippet from its venue: workshops, meetings and
     proceedings become conference publications (they used to be filed as
     journal articles); arXiv stays an article and is marked Submitted."""
-    from ccv.bibtex_io import venue_entrytype
-
     return venue_entrytype(venue)
 
 
@@ -159,8 +144,6 @@ def _pub_to_bibtex(pub: dict[str, Any]) -> str | None:
     # Year is required for CCV/NSERC; skip yearless Scholar rows (ADS covers most).
     if not year:
         return None
-    from ccv.bibtex_io import is_truncated_text, normalize_arxiv
-
     entry_type = _gs_entrytype(venue)
     key = _gs_bibtex_id(pub, title)
     lines = [f"@{entry_type}{{{key},", f"  author = {{{author}}},",
@@ -231,9 +214,6 @@ def ensure_publication_templates(tree: ET.ElementTree) -> list[str]:
     Real exports routinely omit sections that hold no records; the upstream
     `ccv build` refuses to run without a template for each type.
     """
-    import ccv.schema as schema
-    import ccv.xmlutil as xmlutil
-
     fields_by_label = {
         "Journal Articles": schema.ARTICLE_FIELDS,
         "Conference Publications": schema.PROCEEDINGS_FIELDS,
@@ -289,21 +269,13 @@ def ensure_publication_templates(tree: ET.ElementTree) -> list[str]:
 _HQP_SECTION_HINTS = ("Supervisory Activities", "Students and Postdoctoral Fellows")
 
 
-def load_hqp_names(base_tree: ET.ElementTree) -> list[str]:
-    """Supervised-student names from the base CCV (kept for compatibility)."""
-    return [trainee.name for trainee in load_trainees(base_tree)]
-
-
-def load_trainees(base_tree: ET.ElementTree) -> list["Trainee"]:
+def load_trainees(base_tree: ET.ElementTree) -> list[Trainee]:
     """Collect supervised trainees (name, supervision start and end years)
     from the base CCV's Supervisory Activities / HQP section.
 
     The years let the HQP rule skip papers by namesakes written long before
     or after the supervision.
     """
-    import ccv.xmlutil as xmlutil
-    from ccv.hqpmatch import Trainee
-
     root = base_tree.getroot()
     trainees: dict[str, Trainee] = {}
     for section in xmlutil.iter_sections(root):
@@ -338,17 +310,6 @@ def load_trainees(base_tree: ET.ElementTree) -> list["Trainee"]:
     return list(trainees.values())
 
 
-def _author_matches(author: str, hqp: str) -> bool:
-    """True if *author* names the same person as *hqp*.
-
-    Compares full given names when both are known (so 'Murray, Calum' is not
-    'Christopher Murray'), otherwise the initial; accepts compound surnames.
-    """
-    from ccv.hqpmatch import Trainee, author_matches
-
-    return author_matches(author, Trainee(hqp))
-
-
 def _split_authors(text: str) -> list[str]:
     """Split a CCV author list into entries.
 
@@ -371,17 +332,12 @@ def _join_authors(original: str, parts: list[str]) -> str:
 
 
 def _record_year(record) -> int | None:
-    import ccv.xmlutil as xmlutil
-
     text = xmlutil.value_text(xmlutil.field_by_label(record, "Year")).strip()
     return int(text[:4]) if text[:4].isdigit() else None
 
 
 def _hqp_changes(record, trainees) -> tuple[list[str], list[tuple[str, str]], list[str]]:
     """(new author list, [(author, trainee)] added, [author] unmarked) for one record."""
-    import ccv.xmlutil as xmlutil
-    from ccv.hqpmatch import find_trainee, is_marked, unmark
-
     field = xmlutil.field_by_label(record, "Authors")
     text = xmlutil.value_text(field)
     if not text:
@@ -418,10 +374,6 @@ def plan_hqp_marks(tree: ET.ElementTree, hqp_names, records=None) -> list[dict[s
 
     *hqp_names* may be names or ccv.hqpmatch.Trainee objects.
     """
-    import ccv.schema as schema
-    import ccv.xmlutil as xmlutil
-    from ccv.hqpmatch import Trainee
-
     trainees = [h if isinstance(h, Trainee) else Trainee(h) for h in hqp_names]
     marks: list[dict[str, str]] = []
     if not trainees:
@@ -451,10 +403,6 @@ def mark_hqp_authors(tree: ET.ElementTree, hqp_names, records=None) -> int:
     append ' (*)' to trainees and remove '(*)' from authors who match no
     trainee.  Mutates the tree; returns the number of marks added.
     """
-    import ccv.schema as schema
-    import ccv.xmlutil as xmlutil
-    from ccv.hqpmatch import Trainee
-
     trainees = [h if isinstance(h, Trainee) else Trainee(h) for h in hqp_names]
     if not trainees:
         return 0
@@ -478,11 +426,6 @@ def fetch_ads_for_base_artefacts(
     base_tree: ET.ElementTree, token: str, surnames: tuple[str, ...]
 ) -> tuple[str, list[str]]:
     """ADS BibTeX for base-CV rows that look like Google Scholar artefacts."""
-    import ccv.fetch_ads as fetch_ads
-    import ccv.schema as schema
-    import ccv.xmlutil as xmlutil
-    from ccv.publications import _preserved_problem, _record_is_scholar
-
     pubs = xmlutil.find_section(base_tree.getroot(), "Publications")
     if pubs is None:
         return "", []
@@ -516,13 +459,6 @@ def enrich_scholar_from_ads(
     ADS record of the same paper has the full metadata.  Returns
     (extra ADS BibTeX, remaining Scholar BibTeX, report lines).
     """
-    from bibtexparser import bparser
-    from bibtexparser.bwriter import BibTexWriter
-    from bibtexparser.bibdatabase import BibDatabase
-
-    import ccv.fetch_ads as fetch_ads
-    from ccv.bibtex_io import clean_title, entry_keys, titles_equivalent
-
     def parse(text: str) -> list[dict[str, Any]]:
         if not text.strip():
             return []
@@ -567,11 +503,8 @@ def strip_empty_templates(tree: ET.ElementTree) -> list[str]:
     --preserve-extra that empty template has an empty dedupe key and is
     re-appended as a blank record.  Records that are real always have either a
     recordId (preserved from the base) or a filled title (rebuilt from
-    BibTeX), so removing sections that have neither is safe.
+    BibTeX),     so removing sections that have neither is safe.
     """
-    import ccv.schema as schema
-    import ccv.xmlutil as xmlutil
-
     root = tree.getroot()
     pubs = xmlutil.find_section(root, "Publications")
     if pubs is None:
@@ -589,15 +522,11 @@ def strip_empty_templates(tree: ET.ElementTree) -> list[str]:
     return removed
 
 
-def _split_ads_authors(raw: str) -> list[str]:
-    """Delegate to ccv.fetch_ads.split_ads_authors (single implementation)."""
-    from ccv.fetch_ads import split_ads_authors
-
-    return split_ads_authors(raw)
-
-
 def _read_bib_text(path: Path) -> str:
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(f"error: cannot read {path}: {exc}") from exc
     if not text.strip():
         raise SystemExit(f"error: BibTeX file {path} is empty")
     return text
@@ -613,16 +542,12 @@ def merge_bibtex(blocks: list[str], out_path: Path) -> int:
 # ---------------------------------------------------------------------------
 # Name-mismatch safeguard.
 # ---------------------------------------------------------------------------
-# The base CCV records the owner's Family Name.  --surname and the ADS/GS
-# author selectors should agree with it; if they don't, the run is very likely
-# fetching (and marking) someone else's publications — which is exactly what
-# happened with the earlier Kavelaars-on-a-Fabbro run.
+# The base CCV records the owner's Family Name. --surname and the ADS/Scholar
+# selectors must agree with it, or the run would import someone else's papers.
 
 
 def detect_family_name(tree: ET.ElementTree) -> str:
     """Return the Family Name recorded in the base CCV (Personal Information)."""
-    import ccv.xmlutil as xmlutil
-
     root = tree.getroot()
     personal = xmlutil.find_section(root, "Personal Information")
     if personal is None:
@@ -638,7 +563,7 @@ def detect_family_name(tree: ET.ElementTree) -> str:
 def _norm_name(raw: str) -> str:
     """Case- and accent-insensitive form of a name for comparison.
 
-    'Martínez' and 'Martinez' compare equal; so do 'Sébastien' and 'Sebastien'.
+    'Martínez' and 'Martinez' compare equal.
     """
     decomposed = unicodedata.normalize("NFD", raw)
     ascii_ish = "".join(c for c in decomposed if not unicodedata.combining(c))
@@ -661,7 +586,7 @@ def _author_selectors_mismatch(args: argparse.Namespace, family_name: str) -> li
     # --ads-author (ADS 'Surname, Initials' phrases).
     if args.ads_author:
         ads_surnames = [_norm_name(a.split(",", 1)[0])
-                        for a in _split_ads_authors(args.ads_author)]
+                        for a in split_ads_authors(args.ads_author)]
         if ads_surnames and fn not in ads_surnames:
             problems.append(
                 f"--ads-author {args.ads_author!r} searches surnames "
@@ -692,8 +617,7 @@ def check_name_mismatch(args: argparse.Namespace, base_tree: ET.ElementTree) -> 
 
     Returns the mismatch messages (empty when OK). Skipped entirely when
     --no-name-check is given or the CCV has no Family Name. Otherwise a
-    mismatch prints to stderr and raises SystemExit — this is the known
-    failure mode that once fetched Kavelaars papers into a Fabbro CV.
+    mismatch prints to stderr and raises SystemExit.
     """
     if args.no_name_check:
         return []
@@ -713,13 +637,6 @@ def check_name_mismatch(args: argparse.Namespace, base_tree: ET.ElementTree) -> 
 
 
 def run(args: argparse.Namespace) -> int:
-    import ccv.bibtex_io as bibtex_io
-    import ccv.builder as builder
-    import ccv.fetch_ads as fetch_ads
-    import ccv.publications as publications
-    import ccv.validate as validate
-    import ccv.xmlutil as xmlutil
-
     base = Path(args.base).resolve()
     out = Path(args.out).resolve()
     if not base.exists():
@@ -727,7 +644,11 @@ def run(args: argparse.Namespace) -> int:
 
     # Abort early (before any network fetch) when --surname / --ads-* / --gs-*
     # disagree with the Family Name recorded in the base CCV.
-    check_name_mismatch(args, xmlutil.load_ccv(base))
+    try:
+        base_tree = xmlutil.load_ccv(base)
+    except ET.ParseError as exc:
+        raise SystemExit(f"error: {base} is not valid XML: {exc}") from exc
+    check_name_mismatch(args, base_tree)
 
     sources: list[str] = []  # BibTeX blocks, ADS first (richer metadata wins dedupe)
     statuses: list[str] = []
@@ -737,7 +658,7 @@ def run(args: argparse.Namespace) -> int:
         sources.append(_read_bib_text(Path(args.ads_bib)))
         statuses.append(f"ADS (file): {args.ads_bib}")
     elif args.ads_author or args.ads_orcid or args.ads_query or args.ads_bibcodes:
-        ads_authors = _split_ads_authors(args.ads_author) if args.ads_author else None
+        ads_authors = split_ads_authors(args.ads_author) if args.ads_author else None
         if args.ads_author and not ads_authors:
             raise SystemExit(f"error: --ads-author {args.ads_author!r} contains no names")
         token = args.ads_token or os.environ.get("ADS_API_TOKEN")
@@ -753,11 +674,6 @@ def run(args: argparse.Namespace) -> int:
             info = fetch_ads.fetch_bibtex_file(
                 tmp,
                 token=token,
-                # "Kavelaars, J" -> author:"Kavelaars, J"; several surnames
-                # "Kavelaars, Gladman" -> author:"Kavelaars" OR author:"Gladman".
-                # A naive split(",") on "Kavelaars, J" would emit author:"J"
-                # and match thousands of unrelated papers whose (corrupted)
-                # surname is the single letter "J" (see _split_ads_authors).
                 authors=ads_authors,
                 orcid=args.ads_orcid,
                 bibcodes=[b.strip() for b in args.ads_bibcodes.split(",")] if args.ads_bibcodes else None,
@@ -770,6 +686,8 @@ def run(args: argparse.Namespace) -> int:
             else:
                 sources.append(_read_bib_text(Path(tmp)))
                 statuses.append(f"ADS (API): {info['bibcodes']} papers")
+        except fetch_ads.AdsError as exc:
+            raise SystemExit(f"error: {exc}") from exc
         finally:
             Path(tmp).unlink(missing_ok=True)
 
@@ -839,12 +757,12 @@ def run(args: argparse.Namespace) -> int:
         key = entry.get("ID") or entry.get("title") or "?"
         skipped.append((str(key), reason))
 
-    since_cutoff = builder.parse_since(args.since)
+    try:
+        since_cutoff = builder.parse_since(args.since)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from exc
     if since_cutoff is None and args.last_years:
         since_cutoff = builder.since_from_years(args.last_years)
-
-    # NSERC HQP asterisk rule: supervised students/postdocs (with start years).
-    from ccv.hqpmatch import trainees_from_names
 
     trainees = []
     if args.hqp_names:
@@ -969,12 +887,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--base", required=True, help="Existing CCV XML export (the structural base)")
     parser.add_argument("--out", required=True, help="Output CCV XML path")
-    parser.add_argument("--repo", default=None,
-                        help="Optional source tree to prepend on sys.path before "
-                        "importing ccv (default: installed package)")
-    parser.add_argument("--surname", default="Fabbro",
-                        help="Comma-separated surnames used to detect first/last authorship; "
-                        "warned against if it disagrees with the base CCV Family Name")
+    parser.add_argument("--surname", required=True,
+                        help="Comma-separated surnames used to detect first/last "
+                        "authorship (the run aborts if it disagrees with the "
+                        "base CCV Family Name)")
     parser.add_argument("--no-name-check", action="store_true",
                         help="Allow --surname/--ads-*/--gs-* to disagree with "
                         "the base CCV Family Name (default: abort on mismatch)")
@@ -1010,8 +926,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Existing ADS BibTeX export file")
     ads.add_argument("--ads-token", default=None, help="ADS API token (default: $ADS_API_TOKEN)")
     ads.add_argument("--ads-author", default=None,
-                     help="ADS author phrase(s), e.g. 'Fabbro, S'. Multiple "
-                     "surnames: 'Fabbro, Kavelaars' (initials stay glued to "
+                     help="ADS author phrase(s), e.g. 'Smith, J'. Multiple "
+                     "surnames: 'Smith, Jones' (initials stay glued to "
                      "their surname).")
     ads.add_argument("--ads-orcid", default=None, help="ORCID iD, e.g. 0000-0001-0000-0000")
     ads.add_argument("--ads-bibcodes", default=None, help="Comma-separated ADS bibcodes")
@@ -1048,7 +964,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    _import_ccv(args.repo)
     return run(args)
 
 

@@ -17,8 +17,13 @@ def parse_since(value: str | None) -> tuple[int, int] | None:
     if not value:
         return None
     parts = value.strip().split("-")
-    year = int(parts[0])
-    month = int(parts[1]) if len(parts) > 1 else 1
+    try:
+        year = int(parts[0])
+        month = int(parts[1]) if len(parts) > 1 else 1
+    except (ValueError, IndexError):
+        raise ValueError(f"--since must be YYYY or YYYY-MM, got {value!r}") from None
+    if len(parts) > 2 or not 1 <= month <= 12 or year < 1000:
+        raise ValueError(f"--since must be YYYY or YYYY-MM, got {value!r}")
     return year, month
 
 
@@ -41,7 +46,7 @@ def build_from_base(
     bib_path: str | Path,
     out_path: str | Path,
     *,
-    author_surnames: tuple[str, ...] = ("Fabbro",),
+    author_surnames: tuple[str, ...],
     since: str | None = None,
     last_years: int | None = None,
     assign_record_ids: bool = False,

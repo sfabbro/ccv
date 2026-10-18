@@ -29,6 +29,7 @@ from .bibtex_io import (
     normalize_title_key,
     parse_name,
     titles_equivalent,
+    venue_entrytype,
 )
 from .hqpmatch import Trainee, find_trainee
 from .text import strip_latex
@@ -117,7 +118,10 @@ def field_value_map(
 
     # An arXiv-only record is not "Published"; NSERC accepts "Submitted".
     status = overrides.status(entry) or ("Submitted" if preprint else "Published")
-    conf_type = overrides.conference_type(entry) or "Abstract"
+    # Meeting abstracts are "Abstract"; a real conference paper is "Paper"
+    # unless an override says otherwise. Defaulting every talk to Abstract
+    # mislabels proceedings on the CV.
+    conf_type = overrides.conference_type(entry) or ("Abstract" if abstract else "Paper")
     pct: str | None = None
     if fill_percentage:
         pct = overrides.percentage(entry)
@@ -132,7 +136,9 @@ def field_value_map(
     open_access = overrides.open_access(entry)
 
     conf_name = entry.get("booktitle") or journal_name(entry) or ""
-    conf_name = conf_name.replace("Abstract", "").strip()
+    # ADS booktitles often end in "Abstracts". A raw replace of "Abstract"
+    # turned that into "Meeting s".
+    conf_name = re.sub(r"\s+abstracts?$", "", conf_name.strip(), flags=re.I).strip()
 
     year_txt = str(entry.get("year") or "")
     year = int(year_txt) if year_txt.isdigit() else None
@@ -251,15 +257,11 @@ def fill_record(
 def entry_passes_since(entry: dict[str, Any], since: tuple[int, int] | None) -> bool:
     if since is None:
         return True
-    year = int(entry.get("year") or 0)
+    raw = str(entry.get("year") or "").strip()
+    if not raw.isdigit():
+        return False
     month = month_number(entry, default=1)
-    return (year, month) >= since
-
-
-def record_key(record) -> str:
-    """Primary identity of a CCV publication record (DOI, else title)."""
-    keys = record_keys(record)
-    return keys[0] if keys else ""
+    return (int(raw), month) >= since
 
 
 def record_keys(record) -> list[str]:
@@ -377,7 +379,7 @@ def replace_publications(
     tree,
     entries: list[dict[str, Any]],
     *,
-    author_surnames: tuple[str, ...] = ("Fabbro",),
+    author_surnames: tuple[str, ...],
     since: tuple[int, int] | None = None,
     assign_record_ids: bool = False,
     overrides: Overrides | None = None,
@@ -482,9 +484,9 @@ def replace_publications(
             if on_skip:
                 on_skip(entry, "excluded by --overrides skip rule")
             continue
-        if not str(entry.get("year") or "").strip():
+        if not str(entry.get("year") or "").strip().isdigit():
             if on_skip:
-                on_skip(entry, "missing year (required for CCV/NSERC)")
+                on_skip(entry, "missing or non-numeric year (required for CCV/NSERC)")
             continue
         if not entry_passes_since(entry, since):
             if on_skip:
@@ -669,8 +671,6 @@ def effective_entrytype(entry: dict[str, Any]) -> str:
             entry["booktitle"] = entry_venue(entry)
         return "inproceedings"
     if entrytype == "article" and is_scholar_entry(entry):
-        from .bibtex_io import venue_entrytype
-
         guessed = venue_entrytype(entry_venue(entry))
         if guessed == "inproceedings" and not entry.get("booktitle"):
             entry["booktitle"] = entry_venue(entry)

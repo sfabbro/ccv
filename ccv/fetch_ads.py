@@ -42,10 +42,10 @@ _INITIALS_RE = re.compile(r"[A-Za-z]\.?(?:[ -][A-Za-z]\.?)*")
 def split_ads_authors(raw: str) -> list[str]:
     """Split a comma-separated ADS author list, keeping 'Surname, Initials' together.
 
-    'Fabbro, S'        -> ['Fabbro, S']           (one author: initials glued)
-    'Fabbro, Kavelaars' -> ['Fabbro', 'Kavelaars'] (two surnames)
+    'Smith, J'     -> ['Smith, J']        (one author: initials stay attached)
+    'Smith, Jones' -> ['Smith', 'Jones']  (two surnames)
 
-    A naive split(',') on 'Fabbro, S' would emit author:"S" and match
+    A naive split(',') on 'Smith, J' would emit author:"J" and match
     thousands of unrelated papers.
     """
     parts = [p.strip() for p in raw.split(",") if p.strip()]
@@ -61,12 +61,6 @@ def split_ads_authors(raw: str) -> list[str]:
 
 
 def _context() -> ssl.SSLContext:
-    # Debugging aid for environments with broken CA bundles (e.g. sandboxes).
-    if os.environ.get("CCV_ADS_INSECURE") == "1":
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        return ctx
     # conda/pixi OpenSSL often points at a prefix that no longer exists after
     # the checkout moves. certifi ships a current bundle with the env.
     if certifi is not None and os.path.isfile(certifi.where()):

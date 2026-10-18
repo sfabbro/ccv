@@ -3,6 +3,7 @@
 .pixi/
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Tool outputs (never commit personal CCV XML or BibTeX exports)
 *.xml
@@ -15,8 +16,13 @@ CCV-*.xml
 *.token
 ADS_TOKEN*
 
-# Editor/OS junk
+# Editor/OS/tooling junk
 .DS_Store
 *.swp
 .idea/
 .ipynb_checkpoints/
+.cursor/
+.freebuff/
+
+# Third-party documents (link to the source instead of redistributing)
+CCCV_NSERC_INSTRUCTIONS.pdf

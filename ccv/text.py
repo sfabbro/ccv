@@ -44,7 +44,6 @@ _LATEX_REPLACEMENTS = [
     ("\\#", "#"),
     ("\\_", "_"),
     ("\\$", "$"),
-    ("~", " "),
 ]
 
 # Accent command -> {base letter -> unicode}. Covers Latin-1 / Latin Extended-A.
@@ -193,7 +192,11 @@ def strip_latex(text: str | None) -> str:
     if not text:
         return ""
     out = text
-    for macro, expanded in JOURNAL_MACROS.items():
+    # Longest macro first: replacing "\apj" before "\apjl" would leave
+    # "Astrophysical Journall" from a braced {\apjl}.
+    for macro, expanded in sorted(
+        JOURNAL_MACROS.items(), key=lambda kv: len(kv[0]), reverse=True
+    ):
         out = out.replace(macro, expanded)
     out = _DROP_WITH_ARG_RE.sub("", out)
     for src, dst in _LATEX_REPLACEMENTS:
@@ -205,6 +208,8 @@ def strip_latex(text: str | None) -> str:
     out = _UNWRAP_RE.sub("", out)
     out = _LETTER_BRACED_RE.sub(_replace_letter, out)
     out = _LETTER_PLAIN_RE.sub(_replace_letter, out)
+    # BibTeX uses "~" as a tie (J.~J.). Do this after \~n so the accent survives.
+    out = out.replace("~", " ")
 
     # \ensuremath{\Omega} / \Omega → keep the letter name for title matching.
     out = re.sub(r"\\ensuremath\s*\{([^{}]+)\}", r"\1", out)

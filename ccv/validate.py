@@ -108,15 +108,6 @@ def validate_publications(tree, surnames: tuple[str, ...] = ()) -> list[dict[str
     return issues
 
 
-def _value(tree, label, field_name) -> str:
-    root = tree.getroot()
-    section = xmlutil.find_section(root, label)
-    if section is None:
-        return ""
-    field = xmlutil.field_by_label(section, field_name)
-    return xmlutil.value_text(field)
-
-
 def _record_value(record, field_name) -> str:
     return xmlutil.value_text(xmlutil.field_by_label(record, field_name))
 
