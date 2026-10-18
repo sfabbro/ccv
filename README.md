@@ -1,26 +1,15 @@
 # ccv
 
-Build an updated **Canadian Common CV (CCV)** XML from your publication list,
-ready to import at <https://ccv-cvc.ca/> (Utilities → Import CV XML).
+Update the Publications section of a [Canadian Common CV](https://ccv-cvc.ca/)
+from NASA ADS and Google Scholar, then import that XML back into the CCV.
 
-`ccv-update` fetches your papers from **NASA ADS** and **Google Scholar**,
-merges and de-duplicates them, and rebuilds the Publications sections of a CCV
-export you provide as the base. It also handles NSERC-specific requirements:
-the six-year window, the HQP `(*)` rule, and Contribution Role / Percentage.
+Inspired by [JJ Kavelaars' CCV](https://github.com/ijiraq/CCV).
 
-Based on [ijiraq/CCV](https://github.com/ijiraq/CCV), now self-contained.
+`ccv-update` reads an export you already have, replaces the publication
+records, and leaves the rest of the CV as it was. For NSERC it can also apply
+the six-year window, the HQP `(*)` mark, and Contribution Role.
 
 ## Install
-
-With [pixi](https://pixi.sh/) (recommended):
-
-```bash
-git clone https://github.com/sfabbro/ccv.git
-cd ccv
-pixi install
-```
-
-Or with pip / a venv:
 
 ```bash
 git clone https://github.com/sfabbro/ccv.git
@@ -29,16 +18,27 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
 
-Both install the `ccv` and `ccv-update` console scripts.
+That installs the `ccv` and `ccv-update` commands in `.venv/bin`.
 
-## Quick start
+If you use [pixi](https://pixi.sh/), `pixi install` does the same thing, and
+`pixi run ccv-update` replaces `.venv/bin/ccv-update` below.
 
-Export your current CV from ccv-cvc.ca (Utilities → Export) to use as the base,
-then run **one full-career build** (ADS by ORCID + Scholar scrape):
+## 1. Export the XML
+
+1. Sign in at <https://ccv-cvc.ca/>.
+2. Open **Utilities → Export**.
+3. Click **Download** and save the file, for example `CCV-export.xml`.
+4. Keep that file. It is the backup you re-import if something looks wrong.
+
+That file is `--base`.
+
+## 2. Build an updated XML
+
+One full-career build (ADS by ORCID, plus a Scholar scrape):
 
 ```bash
 export ADS_API_TOKEN=...   # ADS → Settings → API Token
-pixi run ccv-update \
+.venv/bin/ccv-update \
     --base CCV-export.xml \
     --out CCV-updated.xml \
     --surname Smith \
@@ -57,6 +57,18 @@ set). For reliable Scholar input without scraping, use `--gs-bib
 ~/scholar-export.bib` (My Library → Export → BibTeX) instead of `--gs-author`.
 `ccv-update --help` lists everything; the lower-level `ccv` CLI
 (`build`, `summarize`, `validate`, `fetch`, `hqp`) is documented there too.
+
+## 3. Import the XML back
+
+1. Sign in at <https://ccv-cvc.ca/>.
+2. Open **Utilities → Import CV XML**.
+3. Choose `CCV-updated.xml`, complete the captcha, and upload.
+4. Replace **Publications**, or replace the whole CV. Everything except the
+   publication records is what you exported in step 1.
+5. Confirm the overwrite warning.
+6. Open Publications and check a few rows: year, authors, `(*)`, and
+   Contribution Role.
+7. If the import looks wrong, import `CCV-export.xml` the same way.
 
 ## Publication sources
 
@@ -100,7 +112,7 @@ flagged by `--validate` (`--drop-unverified-scholar` drops them).
 ## NSERC HQP rule
 
 Every student or postdoc you supervised must be marked with `(*)` in
-publication author lists (e.g. `Ferreira, A. (*)`):
+publication author lists (e.g. `Nguyen, A. (*)`):
 
 - `--hqp-from-base` — read supervised names and supervision dates from the
   base CCV's Supervisory Activities section
@@ -108,25 +120,19 @@ publication author lists (e.g. `Ferreira, A. (*)`):
 - `--hqp-dry-run` — preview exactly which authors would be marked or unmarked,
   without writing the output file
 
-Matching compares full given names before initials (a paper by `Murray, Calum`
-is not your former student `Christopher Murray`), supports compound surnames,
+Matching compares full given names before initials (a paper by `Lee, Colin`
+is not your former student `Christopher Lee`), supports compound surnames,
 and only marks papers written around the supervision period.
-
-## Importing into the CCV
-
-1. Sign in at <https://ccv-cvc.ca/>, **Utilities → Export** — save a backup.
-2. **Utilities → Import CV XML** — upload the generated file (e.g.
-   `CCV-updated.xml`).
-3. Prefer replacing **Publications** first if you want a cautious merge.
-4. Spot-check years, HQP `(*)`, and Contribution Role / Percentage.
-5. If the import looks wrong, re-import the backup from step 1.
 
 ## Development
 
 ```bash
-pixi run test
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest
 python check_schema.py CCV-export.xml . /path/to/dataset-cv-lov.xml
 ```
+
+With pixi, `pixi run test` runs the same pytest.
 
 Field and LOV ids in `ccv/schema.py` are cross-checked against the official
 CCV schema (<https://ccv-cvc.ca/schema/dataset-cv.xml>) and real exports with
@@ -146,7 +152,3 @@ CCV schema (<https://ccv-cvc.ca/schema/dataset-cv.xml>) and real exports with
   CV](https://nserc-crsng.canada.ca/en/funding/online-application-systems-and-tools/online-services/research-portal/instructions/how).
   `scripts/fetch-nserc-instructions.sh` saves the current page locally. It is
   not stored in this repo.
-
-## License
-
-MIT — see [LICENSE](LICENSE).

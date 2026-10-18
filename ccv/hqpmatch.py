@@ -1,8 +1,8 @@
 """Match publication authors to supervised trainees (NSERC HQP '(*)' rule).
 
 The old rule compared surname + first initial on author strings that had
-already been reduced to initials, so 'Murray, Calum' inherited the asterisk
-of a former intern 'Christopher Murray'.  This module compares full given
+already been reduced to initials, so 'Lee, Colin' inherited the asterisk
+of a former trainee 'Christopher Lee'.  This module compares full given
 names whenever both sides have them, accepts compound surnames, and only
 marks papers from the year before supervision started onward.
 """
@@ -54,7 +54,7 @@ def _given_compatible(author_given: str, trainee_given: list[str]) -> bool:
         return False
     a_first, t_first = a_tokens[0], trainee_given[0]
     if len(a_first) > 1 and len(t_first) > 1:
-        # Full names on both sides: allow Chris/Christopher, not Calum/Christopher.
+        # Full names on both sides: allow Chris/Christopher, not Colin/Christopher.
         return a_first.startswith(t_first) or t_first.startswith(a_first)
     return a_first[0] == t_first[0]
 

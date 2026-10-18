@@ -2,7 +2,7 @@
 """ccv-update — fetch papers from NASA ADS + Google Scholar and build an
 updated Canadian Common CV (CCV) XML.
 
-Part of the `ccv` package (originally based on https://github.com/ijiraq/CCV).
+Part of the `ccv` package. Inspired by https://github.com/ijiraq/CCV.
 Adds:
 
   1. Automated retrieval of your publications:
@@ -18,7 +18,7 @@ Output is a CCV XML file ready for "Utilities -> Import CV XML" at
 https://ccv-cvc.ca/ — plus a record of the merged BibTeX that produced it.
 
 Example:
-    pixi run ccv-update \\
+    ccv-update \\
         --base      CCV-export.xml \\
         --out       CCV-updated.xml \\
         --surname   Smith \\
@@ -260,7 +260,7 @@ def ensure_publication_templates(tree: ET.ElementTree) -> list[str]:
 #   1. HQP asterisk rule — every Highly Qualified Personnel (student /
 #      postdoc) you supervised or co-supervised must be marked with an
 #      asterisk in publication author lists.  The CCV convention is to append
-#      " (*)" to the author name (e.g. "Bialek, Spencer (*)").
+#      " (*)" to the author name (e.g. "Carter, Sam (*)").
 #
 #   2. Six-year limit — NSERC validates the Contributions section back to
 #      Jan 1 of the first permissible year (six years prior to the current
@@ -352,7 +352,7 @@ def _hqp_changes(record, trainees) -> tuple[list[str], list[tuple[str, str]], li
             out.append(part)
             continue
         if is_marked(part):
-            # Stale marks (e.g. Rhea, or a namesake of a former intern) are removed.
+            # Stale marks (e.g. a former trainee's namesake) are removed.
             if find_trainee(unmark(part), trainees, year) is None:
                 out.append(unmark(part))
                 removed.append(part)
@@ -503,7 +503,7 @@ def strip_empty_templates(tree: ET.ElementTree) -> list[str]:
     --preserve-extra that empty template has an empty dedupe key and is
     re-appended as a blank record.  Records that are real always have either a
     recordId (preserved from the base) or a filled title (rebuilt from
-    BibTeX),     so removing sections that have neither is safe.
+    BibTeX), so removing sections that have neither is safe.
     """
     root = tree.getroot()
     pubs = xmlutil.find_section(root, "Publications")

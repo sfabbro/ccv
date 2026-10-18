@@ -47,7 +47,7 @@ def _tree():
     return ET.ElementTree(root), pubs
 
 
-def _record(pubs, label, title, *, authors="Other, A.,\n&\nFabbro, S.", year="2024",
+def _record(pubs, label, title, *, authors="Other, A.,\n&\nSmith, J.", year="2024",
             venue="ApJ", extra=None, record_id=None):
     fields = {
         "Journal Articles": schema.ARTICLE_FIELDS,
@@ -93,24 +93,24 @@ def _val(rec, name):
 
 def test_long_author_list_keeps_owner_and_trainee():
     names = [f"Author{i:02d}, X." for i in range(40)]
-    names[25] = "Fabbro, S\\'ebastien"
-    names[31] = "Bialek, Spencer"
+    names[25] = "Smith, Jos\\'e"
+    names[31] = "Carter, Sam"
     entry = {"author": " and ".join(names)}
     text = format_authors_for_ccv(
         entry,
-        keep=lambda raw: is_author(raw, ("Fabbro",)),
-        mark=lambda raw: "Bialek" in raw,
+        keep=lambda raw: is_author(raw, ("Smith",)),
+        mark=lambda raw: "Carter" in raw,
     )
     parts = text.split(",\n")
-    assert "Fabbro, S." in parts
-    assert "Bialek, S. (*)" in parts
+    assert "Smith, J." in parts
+    assert "Carter, S. (*)" in parts
     assert parts[0] == "Author00, X." and text.endswith("&\nAuthor39, X.")
     assert text.count("...") == 3
 
 
 def test_short_author_list_unchanged():
-    entry = {"author": "A, B and Fabbro, S and C, D"}
-    assert format_authors_for_ccv(entry) == "A, B.,\nFabbro, S.,\n&\nC, D."
+    entry = {"author": "A, B and Smith, J and C, D"}
+    assert format_authors_for_ccv(entry) == "A, B.,\nSmith, J.,\n&\nC, D."
 
 
 # 2. Template fields do not leak into rebuilt records -------------------------
@@ -130,9 +130,9 @@ def test_conference_template_values_do_not_leak():
     ET.SubElement(city, "value").text = "Yokohama"
     replace_publications(tree, [{
         "ID": "2012DPS....4421001F", "ENTRYTYPE": "inproceedings",
-        "title": "Searching for KBO flyby targets", "author": "Fabbro, S. and Other, A.",
+        "title": "Searching for KBO flyby targets", "author": "Smith, J. and Other, A.",
         "year": "2012", "booktitle": "AAS/Division for Planetary Sciences Meeting Abstracts",
-    }], author_surnames=("Fabbro",))
+    }], author_surnames=("Smith",))
     rec = _records(pubs, "Conference Publications")[0]
     assert _val(rec, "City") == ""
     assert xmlutil.field_by_label(rec, "Conference Date").find("value") is None
@@ -147,8 +147,8 @@ def test_conference_date_from_bibtex_month():
     date.set("label", "Conference Date")
     replace_publications(tree, [{
         "ID": "x", "ENTRYTYPE": "inproceedings", "title": "A talk", "month": "oct",
-        "author": "Fabbro, S.", "year": "2012", "booktitle": "ADASS XXII",
-    }], author_surnames=("Fabbro",))
+        "author": "Smith, J.", "year": "2012", "booktitle": "ADASS XXII",
+    }], author_surnames=("Smith",))
     rec = _records(pubs, "Conference Publications")[0]
     assert _val(rec, "Conference Date") == "2012/10"
     assert xmlutil.lov_label(xmlutil.field_by_label(rec, "Conference Publication Type")) == "Paper"
@@ -163,9 +163,9 @@ def test_conference_date_from_bibtex_month():
 ])
 def test_preprint_detection(entry):
     assert is_preprint(entry)
-    values = field_value_map({"ENTRYTYPE": "article", "title": "t", "author": "Fabbro, S",
+    values = field_value_map({"ENTRYTYPE": "article", "title": "t", "author": "Smith, J",
                               "year": "2026", **entry},
-                             entrytype="article", author_surnames=("Fabbro",),
+                             entrytype="article", author_surnames=("Smith",),
                              overrides=Overrides())
     assert values["Refereed?"] == "No"
     assert values["Publishing Status"] == "Submitted"
@@ -177,10 +177,10 @@ def test_jasa_abstract_becomes_conference_abstract():
     replace_publications(tree, [{
         "ID": "2024ASAJ..155A.276Z", "ENTRYTYPE": "article",
         "title": "Detecting ringed seal vocalizations in multiple environments",
-        "author": "Zammit, K. and Fabbro, S.", "year": "2024",
+        "author": "Nguyen, K. and Smith, J.", "year": "2024",
         "journal": "Acoustical Society of America Journal", "pages": "A276",
         "adsrefereed": "no", "adsdoctype": "abstract",
-    }], author_surnames=("Fabbro",))
+    }], author_surnames=("Smith",))
     assert not _records(pubs, "Journal Articles")
     rec = _records(pubs, "Conference Publications")[0]
     assert xmlutil.lov_label(xmlutil.field_by_label(rec, "Refereed?")) == "No"
@@ -189,9 +189,9 @@ def test_jasa_abstract_becomes_conference_abstract():
 
 
 def test_ads_refereed_flag_wins():
-    values = field_value_map({"ENTRYTYPE": "article", "title": "t", "author": "Fabbro, S",
+    values = field_value_map({"ENTRYTYPE": "article", "title": "t", "author": "Smith, J",
                               "year": "2024", "journal": "Some Journal", "adsrefereed": "no"},
-                             entrytype="article", author_surnames=("Fabbro",),
+                             entrytype="article", author_surnames=("Smith",),
                              overrides=Overrides())
     assert values["Refereed?"] == "No"
     assert is_meeting_abstract({"journal": "Acoustical Society of America Journal",
@@ -209,15 +209,15 @@ def test_annotate_bibtex_adds_ads_properties():
 
 def test_scholar_snippet_typing_and_urls():
     block = _pub_to_bibtex({"bib": {"title": "Interpreting stellar spectra",
-                                    "author": ["T OBriain", "S Fabbro"], "year": "2020",
+                                    "author": ["T Kelly", "J Smith"], "year": "2020",
                                     "venue": "ICML Workshop on Interpretability"},
                             "eprint_url": "javascript:void(0)"})
     assert block.startswith("@inproceedings") and "booktitle" in block
     assert "javascript" not in block
-    block = _pub_to_bibtex({"bib": {"title": "SKA Regional Centres", "author": ["S Fabbro"],
+    block = _pub_to_bibtex({"bib": {"title": "SKA Regional Centres", "author": ["J Smith"],
                                     "year": "2025", "venue": "… Society of the …"}})
     assert "journal" not in block
-    block = _pub_to_bibtex({"bib": {"title": "C-19", "author": ["K Venn", "S Fabbro"],
+    block = _pub_to_bibtex({"bib": {"title": "C-19", "author": ["K Young", "J Smith"],
                                     "year": "2026", "venue": "arXiv preprint"},
                             "eprint_url": "https://arxiv.org/pdf/2603.02400"})
     assert "eprint = {2603.02400}" in block
@@ -229,15 +229,15 @@ def test_scholar_entry_without_owner_is_dropped_on_request_and_never_replaces_ba
     tree, pubs = _tree()
     _templates(pubs)
     _record(pubs, "Conference Publications", "Interpreting Stellar Spectra with Unsupervised Domain Adaptation",
-            authors="OBriain, T. (*),\n&\nFabbro, S.", year="2020", venue="ICML workshop",
+            authors="Kelly, T. (*),\n&\nSmith, J.", year="2020", venue="ICML workshop",
             record_id="keep-me")
     result = replace_publications(tree, [
         {"ID": "ScholarC19", "ENTRYTYPE": "article", "title": "The primordial nature of C-19",
-         "author": "K Venn and Z Yuan", "year": "2026", "journal": "arXiv preprint arXiv …"},
+         "author": "K Young and Z Chen", "year": "2026", "journal": "arXiv preprint arXiv …"},
         {"ID": "ScholarInterp", "ENTRYTYPE": "article",
          "title": "Interpreting Stellar Spectra with Unsupervised Domain Adaptation",
-         "author": "T OBriain and S Fabbro", "year": "2020", "journal": "arXiv preprint arXiv …"},
-    ], author_surnames=("Fabbro",), preserve_extra=True, drop_unverified_scholar=True)
+         "author": "T Kelly and J Smith", "year": "2020", "journal": "arXiv preprint arXiv …"},
+    ], author_surnames=("Smith",), preserve_extra=True, drop_unverified_scholar=True)
     assert result["scholar_dropped"] == ["ScholarC19"]
     titles = [(r.get("label"), _val(r, TITLE_FIELD[r.get("label")])) for r in _records(pubs)]
     assert ("Conference Publications",
@@ -249,11 +249,11 @@ def test_preserved_scholar_artefacts_dropped_on_request_and_repaired():
     tree, pubs = _tree()
     _templates(pubs)
     _record(pubs, "Journal Articles", "Lensing without mass", record_id="r1",
-            authors="Martin, H., Hudson, M., & Woodfinden, A.", venue="arXiv e …")
+            authors="Miller, H., Davis, M., & Wilson, A.", venue="arXiv e …")
     _record(pubs, "Journal Articles", "CANFAR: A Community-Built Astronomy Platform",
-            record_id="r2", authors="Major, B., Fabbro, S., & Kavelaars, J.",
+            record_id="r2", authors="Moore, B., Smith, J., & Taylor, J.",
             venue="… Society of the …", extra={"URL": "/scholar?output=instlink"})
-    result = replace_publications(tree, [], author_surnames=("Fabbro",), preserve_extra=True,
+    result = replace_publications(tree, [], author_surnames=("Smith",), preserve_extra=True,
                                   drop_unverified_scholar=True)
     titles = [_val(r, "Article Title") for r in _records(pubs, "Journal Articles")]
     assert "Lensing without mass" not in titles
@@ -272,9 +272,9 @@ def test_ads_article_retires_matching_conference_row():
     replace_publications(tree, [{
         "ID": "2022MNRAS.510..870G", "ENTRYTYPE": "article",
         "title": "Uncertainty-aware learning for CFHT image quality",
-        "author": "Gilda, S. and Fabbro, S.", "year": "2022", "journal": "MNRAS",
+        "author": "Anderson, S. and Smith, J.", "year": "2022", "journal": "MNRAS",
         "doi": "10.1093/mnras/stab3243",
-    }], author_surnames=("Fabbro",), preserve_extra=True)
+    }], author_surnames=("Smith",), preserve_extra=True)
     hits = [r for r in _records(pubs) if "Uncertainty-aware" in _val(r, TITLE_FIELD[r.get("label")])]
     assert len(hits) == 1 and hits[0].get("label") == "Journal Articles"
 
@@ -289,25 +289,25 @@ def test_arxiv_keys():
 # 6. Trainee (*) marks -----------------------------------------------------------
 
 def test_namesake_with_different_given_name_not_marked():
-    christopher = Trainee("Christopher Murray", 2019, 2019)
-    assert not author_matches("{Murray}, Calum", christopher, 2025)
-    assert author_matches("{Murray}, Christopher", christopher, 2019)
-    assert not author_matches("Murray, C.", christopher, 2026)  # long after supervision
-    assert author_matches("Murray, C.", christopher, 2020)
-    assert author_matches("Sanchez Tovar, Juan Camilo",
-                          Trainee("Juan Camilo Sanchez Tovar", 2026), 2026)
-    assert not author_matches("Bialek, Spencer", Trainee("Spencer Bialek", 2017, 2024), 2012)
+    christopher = Trainee("Christopher Lee", 2019, 2019)
+    assert not author_matches("{Lee}, Colin", christopher, 2025)
+    assert author_matches("{Lee}, Christopher", christopher, 2019)
+    assert not author_matches("Lee, C.", christopher, 2026)  # long after supervision
+    assert author_matches("Lee, C.", christopher, 2020)
+    assert author_matches("De La Cruz, Maria Jose",
+                          Trainee("Maria Jose De La Cruz", 2026), 2026)
+    assert not author_matches("Carter, Sam", Trainee("Sam Carter", 2017, 2024), 2012)
 
 
 def test_stale_marks_removed_and_hand_typed_lists_kept():
     tree, pubs = _tree()
     rec = _record(pubs, "Conference Publications", "SITELLE",
-                  authors="Rhea, C (*); Rousseau-Nepton, L; Fabbro, S (*); Bialek, S (*)")
-    trainees = [Trainee("Spencer Bialek", 2014, 2024)]
+                  authors="Doe, C (*); Dupont, L; Smith, J (*); Carter, S (*)")
+    trainees = [Trainee("Sam Carter", 2014, 2024)]
     plan = plan_hqp_marks(tree, trainees)
-    assert {m["author"] for m in plan if m["action"] == "remove"} == {"Rhea, C (*)", "Fabbro, S (*)"}
+    assert {m["author"] for m in plan if m["action"] == "remove"} == {"Doe, C (*)", "Smith, J (*)"}
     mark_hqp_authors(tree, trainees)
-    assert _val(rec, "Authors") == "Rhea, C; Rousseau-Nepton, L; Fabbro, S; Bialek, S (*)"
+    assert _val(rec, "Authors") == "Doe, C; Dupont, L; Smith, J; Carter, S (*)"
 
 
 def test_rebuilt_records_marked_from_full_names():
@@ -315,9 +315,9 @@ def test_rebuilt_records_marked_from_full_names():
     _templates(pubs)
     result = replace_publications(tree, [{
         "ID": "2025A&A...699A.201H", "ENTRYTYPE": "article", "title": "UNIONS intrinsic alignment",
-        "author": "{Hervas Peters}, Fabian and {Murray}, Calum and {Fabbro}, S{\\'e}bastien",
+        "author": "{Van Der Berg}, Ana and {Lee}, Colin and {Smith}, Jos{\\'e}",
         "year": "2025", "journal": "A&A",
-    }], author_surnames=("Fabbro",), trainees=[Trainee("Christopher Murray", 2019, 2019)])
+    }], author_surnames=("Smith",), trainees=[Trainee("Christopher Lee", 2019, 2019)])
     rec = _records(pubs, "Journal Articles")[0]
     assert "(*)" not in _val(rec, "Authors")
     assert result["hqp_marks"] == []
@@ -351,18 +351,18 @@ def test_last_years_starts_six_years_back():
 # Extras: alphabetical tails and validation --------------------------------------
 
 def test_last_in_alphabetical_tail_is_co_author():
-    authors = ["Lead, A", "Second, B"] + [f"{c}name, Q" for c in "BCDEFGHIJ"] + ["Zfabbro, S"]
+    authors = ["Lead, A", "Second, B"] + [f"{c}name, Q" for c in "BCDEFGHIJ"] + ["Zlast, S"]
     entry = {"author": " and ".join(authors)}
-    assert author_position(entry, ("Zfabbro",)) is None
-    entry = {"author": " and ".join(["Lead, A", "Fabbro, S"])}
-    assert author_position(entry, ("Fabbro",)) == -1
+    assert author_position(entry, ("Zlast",)) is None
+    entry = {"author": " and ".join(["Lead, A", "Smith, J"])}
+    assert author_position(entry, ("Smith",)) == -1
 
 
 def test_validate_flags_reviewer_visible_problems():
     tree, pubs = _tree()
-    _record(pubs, "Journal Articles", "Not mine", authors="Venn, K., & Yuan, Z.",
+    _record(pubs, "Journal Articles", "Not mine", authors="Young, K., & Chen, Z.",
             venue="arXiv preprint arXiv …", extra={"URL": "javascript:void(0)"})
-    messages = " ".join(i["message"] for i in validate_publications(tree, ("Fabbro",)))
+    messages = " ".join(i["message"] for i in validate_publications(tree, ("Smith",)))
     assert "does not list you" in messages
     assert "truncated" in messages
     assert "invalid URL" in messages
@@ -372,7 +372,7 @@ def test_scholar_snippets_replaced_by_ads_records(monkeypatch):
     import ccv.fetch_ads as fetch_ads
     from ccv.update import enrich_scholar_from_ads
 
-    scholar = ("@article{ScholarC19,\n  author = {K Venn and Z Yuan},\n"
+    scholar = ("@article{ScholarC19,\n  author = {K Young and Z Chen},\n"
                "  title = {The primordial nature of the C-19 stellar stream},\n"
                "  journal = {arXiv preprint arXiv …},\n  year = {2026},\n}\n")
     doc = {"bibcode": "2026arXiv260302400V", "property": ["EPRINT_OPENACCESS"],
@@ -380,10 +380,10 @@ def test_scholar_snippets_replaced_by_ads_records(monkeypatch):
     monkeypatch.setattr(fetch_ads, "lookup_titles",
                         lambda token, titles, surnames: {titles[0]: doc})
     monkeypatch.setattr(fetch_ads, "export_bibtex", lambda token, bibcodes: (
-        "@ARTICLE{2026arXiv260302400V,\n  author = {{Venn}, Kim and {Fabbro}, S.},\n"
+        "@ARTICLE{2026arXiv260302400V,\n  author = {{Young}, Kai and {Smith}, S.},\n"
         "  title = {The primordial nature of the C-19 stellar stream},\n"
         "  journal = {arXiv e-prints},\n  year = {2026},\n}\n"))
-    extra, remaining, report = enrich_scholar_from_ads(scholar, "", "token", ("Fabbro",))
+    extra, remaining, report = enrich_scholar_from_ads(scholar, "", "token", ("Smith",))
     assert "2026arXiv260302400V" in extra and "adsdoctype = {eprint}" in extra
     assert remaining == "" and report
 
@@ -403,8 +403,8 @@ def test_unverified_scholar_rows_kept_by_default():
     tree, pubs = _tree()
     _templates(pubs)
     _record(pubs, "Journal Articles", "The primordial nature of the C-19 stellar stream",
-            record_id="r1", authors="Venn, K., Yuan, Z., & Martin, N.", venue="arXiv preprint arXiv …")
-    result = replace_publications(tree, [], author_surnames=("Fabbro",), preserve_extra=True)
+            record_id="r1", authors="Young, K., Chen, Z., & Miller, N.", venue="arXiv preprint arXiv …")
+    result = replace_publications(tree, [], author_surnames=("Smith",), preserve_extra=True)
     titles = [_val(r, "Article Title") for r in _records(pubs, "Journal Articles")]
     assert "The primordial nature of the C-19 stellar stream" in titles
     assert not result["dropped_preserved"]
@@ -432,14 +432,14 @@ def test_non_numeric_year_is_skipped():
     _templates(pubs)
     result = replace_publications(tree, [{
         "ID": "x", "ENTRYTYPE": "article", "title": "Nope",
-        "author": "A Other and S Fabbro", "year": "in press", "journal": "ApJ",
-    }], author_surnames=("Fabbro",))
+        "author": "A Other and J Smith", "year": "in press", "journal": "ApJ",
+    }], author_surnames=("Smith",))
     assert result["publication_counts"]["Journal Articles"] == 0
     assert not _records(pubs, "Journal Articles")
 
 
 def test_scholar_author_field_and_missing_year():
-    assert _gs_author_field(["S Fabbro", "K M Yi"]) == "S Fabbro and K M Yi"
+    assert _gs_author_field(["J Smith", "K M Park"]) == "J Smith and K M Park"
     assert _gs_author_field("A Smith, B Jones, ...") == "A Smith and B Jones"
     assert _pub_to_bibtex({"bib": {"title": "No Year", "author": ["A"]}}) is None
 
@@ -492,15 +492,15 @@ def test_near_duplicate_base_title_is_replaced():
             "Detecting ringed seal vocalizations in multiple environments using deep learning", year="2024")
     replace_publications(tree, [
         {"ID": "ads-star", "ENTRYTYPE": "article", "title": _mk,
-         "author": "S Fabbro and A Other", "year": "2023", "journal": "MNRAS",
+         "author": "J Smith and A Other", "year": "2023", "journal": "MNRAS",
          "doi": "10.1093/mnras/stad1889"},
         {"ID": "seal-short", "ENTRYTYPE": "article",
          "title": "Detecting ringed seal vocalizations using deep learning",
-         "author": "K Zammit and W Halliday", "year": "2026", "journal": "JASA Express"},
+         "author": "K Nguyen and W Brown", "year": "2026", "journal": "JASA Express"},
         {"ID": "seal-middle", "ENTRYTYPE": "article",
          "title": "Detecting ringed seal vocalizations in multiple environments",
-         "author": "K Zammit and S Fabbro and W Halliday", "year": "2026", "journal": "JASA"},
-    ], author_surnames=("Fabbro",), since=(2023, 1), preserve_extra=True)
+         "author": "K Nguyen and J Smith and W Brown", "year": "2026", "journal": "JASA"},
+    ], author_surnames=("Smith",), since=(2023, 1), preserve_extra=True)
     titles = [_val(r, "Article Title") for r in _records(pubs, "Journal Articles")]
     assert sum("StarUnLink" in t for t in titles) == 1
     assert not any(t.startswith("Detecting ringed seal vocalizations using deep") for t in titles)
