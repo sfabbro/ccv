@@ -251,11 +251,11 @@ MONTH_NUMBERS = {
 
 # ADS / AASTeX journal macros commonly found in astronomy BibTeX.
 JOURNAL_MACROS = {
-    "\\aj": "Astronomical Journal",
-    "\\apj": "Astrophysical Journal",
-    "\\apjl": "Astrophysical Journal Letters",
-    "\\apjs": "Astrophysical Journal Supplement",
-    "\\psj": "Planetary Science Journal",
+    "\\aj": "The Astronomical Journal",
+    "\\apj": "The Astrophysical Journal",
+    "\\apjl": "The Astrophysical Journal Letters",
+    "\\apjs": "The Astrophysical Journal Supplement Series",
+    "\\psj": "The Planetary Science Journal",
     "\\icarus": "Icarus",
     "\\mnras": "Monthly Notices of the Royal Astronomical Society",
     "\\aap": "Astronomy and Astrophysics",

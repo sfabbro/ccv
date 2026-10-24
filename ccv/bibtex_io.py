@@ -10,7 +10,7 @@ from typing import Any, Callable
 from bibtexparser import bparser
 
 from .schema import MONTH_NUMBERS
-from .text import expand_journal, strip_latex
+from .text import canonical_journal, expand_journal, strip_latex
 
 
 def load_bibtex(path: str | Path) -> list[dict[str, Any]]:
@@ -190,7 +190,7 @@ def clean_title(entry: dict[str, Any]) -> str:
 
 
 def journal_name(entry: dict[str, Any]) -> str:
-    return strip_latex(expand_journal(entry.get("journal")))
+    return canonical_journal(strip_latex(expand_journal(entry.get("journal"))))
 
 
 # Fold Greek letters / common LaTeX leftovers so ADS "Omega" matches Scholar "Ω".

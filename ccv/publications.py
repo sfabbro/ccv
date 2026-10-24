@@ -32,7 +32,7 @@ from .bibtex_io import (
     venue_entrytype,
 )
 from .hqpmatch import Trainee, find_trainee
-from .text import strip_latex
+from .text import canonical_journal, strip_latex
 from .overrides import Overrides
 from .schema import (
     FIELDS_BY_ENTRYTYPE,
@@ -135,10 +135,18 @@ def field_value_map(
 
     open_access = overrides.open_access(entry)
 
-    conf_name = entry.get("booktitle") or journal_name(entry) or ""
+    conf_name = strip_latex(entry.get("booktitle") or "") or journal_name(entry) or ""
     # ADS booktitles often end in "Abstracts". A raw replace of "Abstract"
     # turned that into "Meeting s".
     conf_name = re.sub(r"\s+abstracts?$", "", conf_name.strip(), flags=re.I).strip()
+    conf_name = canonical_journal(conf_name)
+
+    raw_journal = strip_latex(str(entry.get("journal") or ""))
+    volume = str(entry.get("volume") or "")
+    # ADS names the topical series "Physica Scripta Volume T" and puts 85 in
+    # volume. The citation is Physica Scripta T85.
+    if raw_journal.lower() == "physica scripta volume t" and volume.isdigit():
+        volume = f"T{volume}"
 
     year_txt = str(entry.get("year") or "")
     year = int(year_txt) if year_txt.isdigit() else None
@@ -169,9 +177,9 @@ def field_value_map(
         "Book Title": entry.get("booktitle", ""),
         "Conference Name": conf_name,
         "Conference Location": "",
-        "Published In": entry.get("series") or entry.get("booktitle") or "",
+        "Published In": strip_latex(entry.get("series") or entry.get("booktitle") or ""),
         "Journal": journal_name(entry),
-        "Volume": entry.get("volume", ""),
+        "Volume": volume,
         "Issue": entry.get("number", ""),
         "Page Range": entry.get("pages", ""),
         "Year": str(entry.get("year", "")),

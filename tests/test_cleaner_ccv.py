@@ -14,6 +14,7 @@ from ccv.bibtex_io import (
     dedupe_entries,
     entry_keys,
     format_authors_for_ccv,
+    journal_name,
     is_author,
     is_meeting_abstract,
     is_preprint,
@@ -185,7 +186,7 @@ def test_jasa_abstract_becomes_conference_abstract():
     rec = _records(pubs, "Conference Publications")[0]
     assert xmlutil.lov_label(xmlutil.field_by_label(rec, "Refereed?")) == "No"
     assert xmlutil.lov_label(xmlutil.field_by_label(rec, "Conference Publication Type")) == "Abstract"
-    assert _val(rec, "Conference Name") == "Acoustical Society of America Journal"
+    assert _val(rec, "Conference Name") == "The Journal of the Acoustical Society of America"
 
 
 def test_ads_refereed_flag_wins():
@@ -333,8 +334,19 @@ def test_latex_commands_not_read_as_accents():
     assert strip_latex(r"\textit{Gaia} DR3") == "Gaia DR3"
     # Longest journal macro must win: "\apj" first used to yield
     # "Astrophysical Journall" from a braced {\apjl}.
-    assert strip_latex(r"{\apjl}") == "Astrophysical Journal Letters"
+    assert strip_latex(r"{\apjl}") == "The Astrophysical Journal Letters"
     assert strip_latex(r"\aapl") == "Astronomy and Astrophysics Letters"
+    assert journal_name({"journal": r"\apj"}) == "The Astrophysical Journal"
+    assert journal_name({"journal": r"\apjs"}) == "The Astrophysical Journal Supplement Series"
+    assert journal_name({"journal": "arXiv"}) == "arXiv e-prints"
+    assert journal_name({"journal": "Physica Scripta Volume T"}) == "Physica Scripta"
+    physica = field_value_map(
+        {"journal": "Physica Scripta Volume T", "volume": "85", "title": "t",
+         "author": "Fabbro, S", "year": "2000"},
+        entrytype="article", author_surnames=("Fabbro",), overrides=Overrides(),
+    )
+    assert physica["Journal"] == "Physica Scripta"
+    assert physica["Volume"] == "T85"
     assert strip_latex(r"Pe{\~n}a") == "Peña"
     assert strip_latex(r"J.~J.~Smith") == "J. J. Smith"
 

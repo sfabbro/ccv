@@ -176,11 +176,61 @@ def _replace_letter(match: re.Match[str]) -> str:
     return _LETTER_MACROS.get(match.group(1), match.group(1))
 
 
+# ADS `pub` names. Keys are the short forms BibTeX and older CCV rows use.
+_CANONICAL_JOURNALS = {
+    "astronomical journal": "The Astronomical Journal",
+    "the astronomical journal": "The Astronomical Journal",
+    "astrophysical journal": "The Astrophysical Journal",
+    "the astrophysical journal": "The Astrophysical Journal",
+    "astrophysical journal letters": "The Astrophysical Journal Letters",
+    "the astrophysical journal letters": "The Astrophysical Journal Letters",
+    "astrophysical journal supplement": "The Astrophysical Journal Supplement Series",
+    "astrophysical journal supplement series": "The Astrophysical Journal Supplement Series",
+    "the astrophysical journal supplement series": "The Astrophysical Journal Supplement Series",
+    "planetary science journal": "The Planetary Science Journal",
+    "the planetary science journal": "The Planetary Science Journal",
+    "physica scripta": "Physica Scripta",
+    "physica scripta volume t": "Physica Scripta",
+    "acoustical society of america journal": "The Journal of the Acoustical Society of America",
+    "the journal of the acoustical society of america": "The Journal of the Acoustical Society of America",
+    "jasa express letters": "JASA Express Letters",
+    "journal of astronomical telescopes": (
+        "Journal of Astronomical Telescopes, Instruments, and Systems"
+    ),
+    "journal of astronomical telescopes, instruments, and systems": (
+        "Journal of Astronomical Telescopes, Instruments, and Systems"
+    ),
+    "new worlds in astroparticle physics": (
+        "New Worlds in Astroparticle Physics: "
+        "Proceedings of the Fifth International Workshop"
+    ),
+    "new worlds in astroparticle physics: proceedings of the fifth international workshop": (
+        "New Worlds in Astroparticle Physics: "
+        "Proceedings of the Fifth International Workshop"
+    ),
+}
+
+
 def expand_journal(name: str | None) -> str:
     if not name:
         return ""
     name = name.strip()
     return JOURNAL_MACROS.get(name, JOURNAL_MACROS.get(name.lower(), name))
+
+
+def canonical_journal(name: str | None) -> str:
+    """ADS publication name for a journal string.
+
+    Short macro expansions (``Astrophysical Journal``) and arXiv labels
+    become the name ADS stores in ``pub``. Unknown names are unchanged.
+    """
+    cleaned = re.sub(r"\s+", " ", (name or "")).strip()
+    if not cleaned:
+        return ""
+    key = cleaned.lower()
+    if key.startswith("arxiv"):
+        return "arXiv e-prints"
+    return _CANONICAL_JOURNALS.get(key, cleaned)
 
 
 def strip_latex(text: str | None) -> str:
